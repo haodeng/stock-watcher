@@ -12,8 +12,8 @@ type Env = {
 export type Bar = { time: string; open: number; high: number; low: number; close: number; volume: number };
 const api = new Hono<{ Bindings: Env }>();
 const copenhagenClock = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Copenhagen", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" });
-type MarketStock = { code: string; name: string };
-type NasdaqResponse = { data?: { instrumentListing?: { rows?: Array<{ symbol?: string; fullName?: string; isin?: string }> } } };
+type MarketStock = { code: string; name: string; sector: string };
+type NasdaqResponse = { data?: { instrumentListing?: { rows?: Array<{ symbol?: string; fullName?: string; sector?: string; isin?: string }> } } };
 let denmarkStocks: { expires: number; stocks: MarketStock[] } | undefined;
 
 function number(value: unknown, message: string): number {
@@ -62,7 +62,7 @@ async function marketStocks(): Promise<MarketStock[]> {
   const responses = await Promise.all(urls.map((url) => fetch(url, { headers: { "User-Agent": "stock-watcher/1.0" } })));
   if (responses.some((response) => !response.ok)) throw new Error(`Nasdaq returned ${responses.find((response) => !response.ok)?.status} while loading Denmark stocks`);
   const payloads = await Promise.all(responses.map((response) => response.json() as Promise<NasdaqResponse>));
-  const stocks = payloads.flatMap((payload) => payload.data?.instrumentListing?.rows ?? []).flatMap((stock) => stock.symbol ? [{ code: nasdaqCode(stock.symbol), name: stock.fullName ?? stock.symbol }] : []).sort((left, right) => left.code.localeCompare(right.code));
+  const stocks = payloads.flatMap((payload) => payload.data?.instrumentListing?.rows ?? []).flatMap((stock) => stock.symbol ? [{ code: nasdaqCode(stock.symbol), name: stock.fullName ?? stock.symbol, sector: stock.sector ?? "" }] : []).sort((left, right) => left.code.localeCompare(right.code));
   denmarkStocks = { stocks, expires: Date.now() + 24 * 60 * 60 * 1000 };
   return stocks;
 }
@@ -168,6 +168,11 @@ api.post("/api/watchlists", async (context) => {
   const result = await context.env.DB.prepare("INSERT INTO watchlists (name) VALUES (?)").bind(watchlistName(String(body.name ?? ""))).run();
   return context.json({ id: result.meta.last_row_id }, 201);
 });
+api.put("/api/watchlists/:watchlistId", async (context) => {
+  const body = await context.req.json<{ name?: string }>();
+  await context.env.DB.prepare("UPDATE watchlists SET name = ? WHERE id = ?").bind(watchlistName(String(body.name ?? "")), id(context.req.param("watchlistId"))).run();
+  return context.json({ ok: true });
+});
 api.get("/api/watchlists/:watchlistId/stocks", async (context) => {
   const rows = await context.env.DB.prepare("SELECT s.id, s.code, s.provider_symbol AS providerSymbol, s.note, s.note_updated_at AS noteUpdatedAt, (SELECT close FROM daily_bars WHERE stock_id=s.id ORDER BY trading_date DESC LIMIT 1) AS last, (SELECT close FROM daily_bars WHERE stock_id=s.id ORDER BY trading_date DESC LIMIT 1 OFFSET 1) AS previous FROM stocks s JOIN watchlist_stocks ws ON ws.stock_id=s.id WHERE ws.watchlist_id=? ORDER BY s.code").bind(id(context.req.param("watchlistId"))).all<{ id: number; code: string; providerSymbol: string; note: string | null; noteUpdatedAt: string | null; last: number | null; previous: number | null }>();
   return context.json(rows.results.map(({ previous, ...stock }) => ({ ...stock, change: stock.last != null && previous != null ? stock.last - previous : null, changePercent: stock.last != null && previous ? (stock.last - previous) / previous * 100 : null })));
@@ -191,7 +196,7 @@ api.delete("/api/stocks/:stockId/note", async (context) => {
   return context.json({ ok: true });
 });
 api.post("/api/stocks", async (context) => {
-  const body = await context.req.json<{ code?: string; watchlistId?: number }>();
+  const body = await context.req.json<{ code?: string; watchlistId?: number; sync?: boolean }>();
   const code = parseCode(String(body.code ?? ""));
   const symbol = yahooSymbol(code);
   const existing = await context.env.DB.prepare("SELECT id FROM stocks WHERE code = ?").bind(code).first<{ id: number }>();
@@ -199,11 +204,21 @@ api.post("/api/stocks", async (context) => {
   const main = await context.env.DB.prepare("SELECT id FROM watchlists ORDER BY id LIMIT 1").first<{ id: number }>();
   const watchlistId = body.watchlistId == null ? (main?.id ?? Number((await context.env.DB.prepare("INSERT INTO watchlists (name) VALUES ('Main')").run()).meta.last_row_id)) : id(String(body.watchlistId));
   await context.env.DB.prepare("INSERT OR IGNORE INTO watchlist_stocks (watchlist_id, stock_id) VALUES (?, ?)").bind(watchlistId, stockId).run();
-  if (!existing) await syncStock(context.env, stockId, symbol);
+  if (!existing && body.sync !== false) await syncStock(context.env, stockId, symbol);
   return context.json({ id: stockId }, 201);
 });
 api.post("/api/sync", async (context) => {
   await syncAll(context.env);
+  return context.json({ ok: true });
+});
+api.post("/api/stocks/:stockId/sync", async (context) => {
+  const stockId = id(context.req.param("stockId"));
+  const stock = await context.env.DB.prepare("SELECT code FROM stocks WHERE id = ?").bind(stockId).first<{ code: string }>();
+  if (!stock) throw new Error("stock not found");
+  const symbol = yahooSymbol(stock.code);
+  await context.env.DB.prepare("UPDATE stocks SET provider_symbol = ? WHERE id = ?").bind(symbol, stockId).run();
+  await syncStock(context.env, stockId, symbol);
+  await checkAlerts(context.env);
   return context.json({ ok: true });
 });
 api.get("/api/bars", async (context) => {

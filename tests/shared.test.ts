@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { chartTime, crossed, nasdaqCode, parseCode, sameSecret, stockNote, yahooSymbol } from "../src/shared";
+import { chartTime, crossed, nasdaqCode, parseCode, sameSecret, stockNote, watchlistName, yahooSymbol } from "../src/shared";
 import { aggregateDailyBars, aggregateHourlyBars, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
@@ -10,9 +10,11 @@ test("Danish codes map to Yahoo symbols", () => {
   assert.equal(yahooSymbol("nda_dk"), "NDA-DK.CO");
   assert.equal(yahooSymbol("novo_b_dk"), "NOVO-B.CO");
   assert.equal(nasdaqCode("NDA DKK"), "NDA_DK");
+  assert.equal(nasdaqCode("NDA DK"), "NDA_DK");
   assert.equal(nasdaqCode("NOVO B"), "NOVO_B_DK");
   assert.equal(stockNote("  review earnings  "), "review earnings");
   assert.equal(stockNote(""), null);
+  assert.equal(watchlistName(" Focus "), "Focus");
   assert.throws(() => stockNote("x".repeat(2_001)));
   assert.throws(() => parseCode("NDA_US"));
 });
@@ -31,7 +33,16 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.equal(config.assets.binding, "ASSETS");
   assert.equal(config.triggers, undefined);
   assert.match(await readFile("src/worker.ts", "utf8"), /market=CPH/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /sector: stock\.sector/);
   assert.match(await readFile("src/worker.ts", "utf8"), /FROM stocks s JOIN watchlist_stocks ws/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /body\.sync !== false/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /api\.put\("\/api\/watchlists\/:watchlistId"/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /api\.post\("\/api\/stocks\/:stockId\/sync"/);
+  assert.match(await readFile("src/style.css", "utf8"), /\.symbol-results \{ min-height: 0; flex: 1; overflow: auto; \}/);
+  assert.match(await readFile("src/frontend.tsx", "utf8"), /displayedStocks\.map/);
+  assert.match(await readFile("src/frontend.tsx", "utf8"), /bars\.length - 300/);
+  assert.match(await readFile("src/frontend.tsx", "utf8"), /sectorSort/);
+  assert.match(await readFile("src/frontend.tsx", "utf8"), /All sectors/);
 });
 
 test("manual sync requests full history", () => {

@@ -23,8 +23,8 @@ For local development, create `.dev.vars` with `APP_ACCESS_KEY` and `SESSION_SEC
 
 ## Using the app
 
-Sign in and choose **Add symbol** to search Nasdaq Copenhagen listings, then select 1D, 1W, 1M, 4H, or 1H charts. Weekly and monthly candles are derived from daily bars. Use the copy icon in the watchlist header to copy the selected stock to another watchlist.
+Sign in and choose **Add symbol** to search Nasdaq Copenhagen listings. Select one or more stocks, then choose **Add selected**; batch additions wait for a manual sync. Select 1D, 1W, 1M, 4H, or 1H charts. Weekly and monthly candles are derived from daily bars. Use the pencil or copy icons in the watchlist header to rename a watchlist or copy the selected stock to another list.
 
-Each stock can have one note. Its preview appears beside the chart ticker; use the editor below the chart to add, edit, or remove it. The note timestamp shows when it was last saved.
+Each stock can have one note. Its preview appears beside the chart ticker; use the editor below the chart to add, edit, or remove it. The note timestamp shows when it was last saved. The chart header also shows the Nasdaq-provided sector, and the watchlist tooltip includes it.
 
-Data is refreshed only when you click **Sync data**. The first sync backfills 10 years of daily and 2 years of hourly history; later syncs fetch only five recent days. It then evaluates armed price alerts. There is no scheduled sync, which avoids repeatedly hitting Yahoo Finance's undocumented rate limit.
+Data is refreshed only when you click **Sync data**, or **Sync stock** beside the chart for the selected symbol. The first sync backfills 10 years of daily and 2 years of hourly history; later syncs fetch only five recent days. It then evaluates armed price alerts. There is no scheduled sync, which avoids repeatedly hitting Yahoo Finance's undocumented rate limit.

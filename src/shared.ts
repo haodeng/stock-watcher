@@ -13,7 +13,7 @@ export function yahooSymbol(code: string): string {
 
 export function nasdaqCode(symbol: string): string {
   const base = symbol.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "");
-  return `${base === "NDA_DKK" ? "NDA" : base}_DK`;
+  return `${base === "NDA_DKK" || base === "NDA_DK" ? "NDA" : base}_DK`;
 }
 
 export function stockNote(value: unknown): string | null {
