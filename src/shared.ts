@@ -1,6 +1,7 @@
 export type Direction = "above" | "below";
 type PriceBar = { high: number; low: number; close: number };
 type Swing = { index: number; direction: "high" | "low" };
+export type FairValueGap = { index: number; direction: "bullish" | "bearish"; top: number; bottom: number };
 
 export function parseCode(value: string): string {
   const code = value.trim().toUpperCase();
@@ -63,6 +64,21 @@ export function swings(bars: PriceBar[], multiplier = 2): Swing[] {
     const reversal = Math.abs((swing.direction === "high" ? bars[swing.index].high : bars[swing.index].low) - (previous.direction === "high" ? bars[previous.index].high : bars[previous.index].low));
     return reversal >= atr(bars, swing.index) * multiplier ? [...result, swing] : result;
   }, []);
+}
+
+export function fairValueGaps(bars: PriceBar[]): FairValueGap[] {
+  const active: FairValueGap[] = [];
+  for (let index = 14; index < bars.length; index++) {
+    const bar = bars[index];
+    for (let zoneIndex = active.length - 1; zoneIndex >= 0; zoneIndex--) {
+      const zone = active[zoneIndex];
+      if (zone.direction === "bullish" ? bar.low <= zone.bottom : bar.high >= zone.top) active.splice(zoneIndex, 1);
+    }
+    const first = bars[index - 2], gap = atr(bars, index) / 2;
+    if (bar.low - first.high >= gap) active.push({ index, direction: "bullish", top: bar.low, bottom: first.high });
+    if (first.low - bar.high >= gap) active.push({ index, direction: "bearish", top: first.low, bottom: bar.high });
+  }
+  return ["bullish", "bearish"].flatMap((direction) => active.filter((zone) => zone.direction === direction).slice(-3));
 }
 
 export function sameSecret(actual: string, expected: string): boolean {

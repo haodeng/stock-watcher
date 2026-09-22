@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { chartTime, crossed, nasdaqCode, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol } from "../src/shared";
+import { chartTime, crossed, fairValueGaps, nasdaqCode, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol } from "../src/shared";
 import { aggregateDailyBars, aggregateHourlyBars, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
@@ -61,6 +61,13 @@ test("hourly timestamps become chart timestamps", () => {
 test("ATR-filtered swings ignore minor reversals", () => {
   const bars = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 35, 24, 23, 22, 21, 20, 21, 22, 23, 24, 36, 24, 23, 22, 21, 20].map((value) => ({ high: value + 1, low: value - 1, close: value }));
   assert.deepEqual(swings(bars), [{ index: 15, direction: "high" }, { index: 20, direction: "low" }, { index: 25, direction: "high" }]);
+});
+
+test("fair value gaps remain until price fills them", () => {
+  const bars = Array.from({ length: 14 }, () => ({ high: 101, low: 99, close: 100 })).concat([{ high: 100, low: 99, close: 100 }, { high: 105, low: 100, close: 104 }, { high: 107, low: 102, close: 106 }]);
+  assert.deepEqual(fairValueGaps(bars), [{ index: 16, direction: "bullish", top: 102, bottom: 100 }]);
+  bars.push({ high: 104, low: 99, close: 100 });
+  assert.deepEqual(fairValueGaps(bars), []);
 });
 
 test("four-hour candles follow Copenhagen trading sessions", () => {

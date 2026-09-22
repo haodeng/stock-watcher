@@ -1,8 +1,8 @@
-import { CandlestickSeries, createChart, CrosshairMode, HistogramSeries, LineSeries, type Time } from "lightweight-charts";
+import { CandlestickSeries, createChart, CrosshairMode, HistogramSeries, LineSeries, type SeriesAttachedParameter, type Time } from "lightweight-charts";
 import { IconCheck, IconChevronDown, IconCopy, IconNote, IconPencil, IconPlus, IconSearch, IconTrash, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
-import { chartTime, swings } from "./shared";
+import { chartTime, fairValueGaps, swings, type FairValueGap } from "./shared";
 import "./style.css";
 
 type Stock = { id: number; code: string; providerSymbol: string; note: string | null; noteUpdatedAt: string | null; last: number | null; change: number | null; changePercent: number | null };
@@ -28,14 +28,35 @@ function badgeText(code: string) { return code.replace(/_DK$/, "").split("_").ma
 const sectorColors: Record<string, string> = { "Communication Services": "#38bdf8", "Consumer Discretionary": "#f59e0b", "Consumer Staples": "#facc15", Energy: "#fb7185", Financials: "#60a5fa", "Health Care": "#f472b6", Industrials: "#a78bfa", "Information Technology": "#34d399", Materials: "#d97706", "Real Estate": "#c084fc", Utilities: "#2dd4bf" };
 function sectorColor(sector: string | undefined) { return sectorColors[sector ?? ""] ?? "#6b7280"; }
 
+class FvgZones {
+  private chart?: SeriesAttachedParameter["chart"];
+  private series?: SeriesAttachedParameter["series"];
+  constructor(private zones: FairValueGap[], private bars: Bar[]) {}
+  attached({ chart, series }: SeriesAttachedParameter) { this.chart = chart; this.series = series; }
+  paneViews() { return [this]; }
+  zOrder() { return "bottom" as const; }
+  renderer() {
+    return { draw: () => {}, drawBackground: (target: any) => target.useMediaCoordinateSpace((scope: any) => {
+      if (!this.chart || !this.series) return;
+      for (const zone of this.zones) {
+        const x = this.chart.timeScale().timeToCoordinate(chartTime(this.bars[zone.index].time) as Time), top = this.series.priceToCoordinate(zone.top), bottom = this.series.priceToCoordinate(zone.bottom);
+        if (x == null || top == null || bottom == null) continue;
+        scope.context.fillStyle = zone.direction === "bullish" ? "#21b89a20" : "#f04d6120";
+        scope.context.fillRect(x, top, scope.mediaSize.width - x, bottom - top);
+      }
+    }) };
+  }
+}
+
 function Chart({ bars, fit, swingMultiplier }: { bars: Bar[]; fit: boolean; swingMultiplier: number }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [showZigZag, setShowZigZag] = useState(true);
+  const [showZigZag, setShowZigZag] = useState(true), [showFvg, setShowFvg] = useState(true);
   useEffect(() => {
     if (!ref.current || !bars.length) return;
     const chart = createChart(ref.current, { width: ref.current.clientWidth, height: 500, layout: { background: { color: "#101214" }, textColor: "#a8afb9" }, grid: { vertLines: { color: "#20252b" }, horzLines: { color: "#20252b" } }, crosshair: { mode: CrosshairMode.Normal }, rightPriceScale: { borderColor: "#343a42" }, timeScale: { borderColor: "#343a42" } });
     const series = chart.addSeries(CandlestickSeries, { upColor: "#21b89a", downColor: "#f04d61", borderVisible: false, wickUpColor: "#21b89a", wickDownColor: "#f04d61" });
     series.setData(bars.map((bar) => ({ ...bar, time: chartTime(bar.time) as Time })));
+    if (showFvg) series.attachPrimitive(new FvgZones(fairValueGaps(bars), bars));
     if (showZigZag) {
       const swingPoints = swings(bars, swingMultiplier);
       const zigZag = chart.addSeries(LineSeries, { color: "#d8b469", lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
@@ -52,8 +73,8 @@ function Chart({ bars, fit, swingMultiplier }: { bars: Bar[]; fit: boolean; swin
     const observer = new ResizeObserver(() => chart.applyOptions({ width: ref.current?.clientWidth ?? 0 }));
     observer.observe(ref.current);
     return () => { observer.disconnect(); chart.remove(); };
-  }, [bars, fit, showZigZag, swingMultiplier]);
-  return <div className="chart">{bars.length ? <><button className={`fit-chart zigzag-toggle ${showZigZag ? "selected" : ""}`} aria-pressed={showZigZag} onClick={() => setShowZigZag((value) => !value)}>ZigZag {showZigZag ? "on" : "off"}</button><div ref={ref} /></> : <p>No price history for this timeframe.</p>}</div>;
+  }, [bars, fit, showFvg, showZigZag, swingMultiplier]);
+  return <div className="chart">{bars.length ? <><button className={`fit-chart zigzag-toggle ${showZigZag ? "selected" : ""}`} aria-pressed={showZigZag} onClick={() => setShowZigZag((value) => !value)}>ZigZag {showZigZag ? "on" : "off"}</button><button className={`fit-chart zigzag-toggle ${showFvg ? "selected" : ""}`} aria-pressed={showFvg} onClick={() => setShowFvg((value) => !value)}>FVG {showFvg ? "on" : "off"}</button><div ref={ref} /></> : <p>No price history for this timeframe.</p>}</div>;
 }
 
 function Login({ done }: { done: () => void }) {
