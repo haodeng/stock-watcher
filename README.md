@@ -10,6 +10,10 @@ npx wrangler d1 create stock-watcher
 # Put the returned database_id in wrangler.jsonc.
 npx wrangler d1 execute stock-watcher --local --file=migrations/0001_initial.sql
 npx wrangler d1 execute stock-watcher --file=migrations/0001_initial.sql --remote
+npx wrangler d1 execute stock-watcher --local --file=migrations/0002_stock_notes.sql
+npx wrangler d1 execute stock-watcher --file=migrations/0002_stock_notes.sql --remote
+npx wrangler d1 execute stock-watcher --local --file=migrations/0003_note_timestamp.sql
+npx wrangler d1 execute stock-watcher --file=migrations/0003_note_timestamp.sql --remote
 npx wrangler secret put APP_ACCESS_KEY
 npx wrangler secret put SESSION_SECRET
 npm run dev
@@ -19,6 +23,8 @@ For local development, create `.dev.vars` with `APP_ACCESS_KEY` and `SESSION_SEC
 
 ## Using the app
 
-Sign in, add a Denmark ticker such as `NDA_DK`, then select Daily, Weekly, Monthly, or Hourly charts. Weekly and monthly candles are derived from daily bars.
+Sign in and choose **Add symbol** to search Nasdaq Copenhagen listings, then select 1D, 1W, 1M, 4H, or 1H charts. Weekly and monthly candles are derived from daily bars. Use the copy icon in the watchlist header to copy the selected stock to another watchlist.
 
-Data is refreshed only when you click **Sync all history**. It upserts 10 years of daily and 2 years of hourly history for every saved stock, then evaluates armed price alerts. There is no scheduled sync, which avoids repeatedly hitting Yahoo Finance's undocumented rate limit.
+Each stock can have one note. Its preview appears beside the chart ticker; use the editor below the chart to add, edit, or remove it. The note timestamp shows when it was last saved.
+
+Data is refreshed only when you click **Sync data**. The first sync backfills 10 years of daily and 2 years of hourly history; later syncs fetch only five recent days. It then evaluates armed price alerts. There is no scheduled sync, which avoids repeatedly hitting Yahoo Finance's undocumented rate limit.

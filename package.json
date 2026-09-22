@@ -9,6 +9,7 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
+    "@tabler/icons-react": "^3.48.0",
     "hono": "^4.6.0",
     "lightweight-charts": "^5.0.0",
     "react": "^19.0.0",

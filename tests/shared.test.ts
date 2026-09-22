@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { crossed, parseCode, sameSecret, yahooSymbol } from "../src/shared";
-import { aggregateDailyBars, syncRanges } from "../src/worker";
+import { chartTime, crossed, nasdaqCode, parseCode, sameSecret, stockNote, yahooSymbol } from "../src/shared";
+import { aggregateDailyBars, aggregateHourlyBars, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
   assert.equal(parseCode("nda_dk"), "NDA_DK");
+  assert.equal(parseCode("novo_b_dk"), "NOVO_B_DK");
   assert.equal(yahooSymbol("nda_dk"), "NDA-DK.CO");
+  assert.equal(yahooSymbol("novo_b_dk"), "NOVO-B.CO");
+  assert.equal(nasdaqCode("NDA DKK"), "NDA_DK");
+  assert.equal(nasdaqCode("NOVO B"), "NOVO_B_DK");
+  assert.equal(stockNote("  review earnings  "), "review earnings");
+  assert.equal(stockNote(""), null);
+  assert.throws(() => stockNote("x".repeat(2_001)));
   assert.throws(() => parseCode("NDA_US"));
 });
 test("alerts fire only on a price crossing", () => {
@@ -23,10 +30,29 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   const config = JSON.parse(await readFile("wrangler.jsonc", "utf8"));
   assert.equal(config.assets.binding, "ASSETS");
   assert.equal(config.triggers, undefined);
+  assert.match(await readFile("src/worker.ts", "utf8"), /market=CPH/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /FROM stocks s JOIN watchlist_stocks ws/);
 });
 
 test("manual sync requests full history", () => {
   assert.deepEqual(syncRanges(), { daily: "10y", hourly: "2y" });
+});
+
+test("an existing stock syncs only recent bars", () => {
+  assert.deepEqual(syncRanges(true, true), { daily: "5d", hourly: "5d" });
+});
+
+test("hourly timestamps become chart timestamps", () => {
+  assert.equal(chartTime("2026-09-22T14:00:00.000Z"), 1_790_085_600);
+  assert.equal(chartTime("2026-09-22"), "2026-09-22");
+});
+
+test("four-hour candles follow Copenhagen trading sessions", () => {
+  const bars = Array.from({ length: 8 }, (_, index) => ({ time: `2024-09-18T${String(index + 7).padStart(2, "0")}:00:00.000Z`, open: 100 + index, high: 102 + index, low: 99 + index, close: 101 + index, volume: 10 }));
+  assert.deepEqual(aggregateHourlyBars(bars), [
+    { time: "2024-09-18T07:00:00.000Z", open: 100, high: 105, low: 99, close: 104, volume: 40 },
+    { time: "2024-09-18T11:00:00.000Z", open: 104, high: 109, low: 103, close: 108, volume: 40 },
+  ]);
 });
 
 test("weekly and monthly candles are derived from daily bars", () => {
