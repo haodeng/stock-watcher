@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { chartTime, crossed, nasdaqCode, parseCode, sameSecret, stockNote, watchlistName, yahooSymbol } from "../src/shared";
+import { chartTime, crossed, nasdaqCode, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol } from "../src/shared";
 import { aggregateDailyBars, aggregateHourlyBars, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
@@ -56,6 +56,11 @@ test("an existing stock syncs only recent bars", () => {
 test("hourly timestamps become chart timestamps", () => {
   assert.equal(chartTime("2026-09-22T14:00:00.000Z"), 1_790_085_600);
   assert.equal(chartTime("2026-09-22"), "2026-09-22");
+});
+
+test("ATR-filtered swings ignore minor reversals", () => {
+  const bars = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 35, 24, 23, 22, 21, 20, 21, 22, 23, 24, 36, 24, 23, 22, 21, 20].map((value) => ({ high: value + 1, low: value - 1, close: value }));
+  assert.deepEqual(swings(bars), [{ index: 15, direction: "high" }, { index: 20, direction: "low" }, { index: 25, direction: "high" }]);
 });
 
 test("four-hour candles follow Copenhagen trading sessions", () => {
