@@ -103,6 +103,12 @@ export function orderBlocks(bars: OhlcBar[], swingMultiplier = 3, displacementAt
   return ["bullish", "bearish"].flatMap((direction) => blocks.filter((block) => block.direction === direction && !bars.slice(block.confirmedAt + 1).some((bar) => direction === "bullish" ? bar.close < block.bottom : bar.close > block.top)).slice(-Math.max(1, Math.floor(limit))));
 }
 
+export function zoneNearby(bars: PriceBar[], zones: Array<Pick<FairValueGap, "top" | "bottom">>): boolean {
+  const last = bars.at(-1);
+  if (!last) return false;
+  return zones.some((zone) => last.low <= zone.top && last.high >= zone.bottom || Math.min(Math.abs(last.close - zone.top), Math.abs(last.close - zone.bottom)) <= atr(bars, bars.length - 1) / 4);
+}
+
 export function sameSecret(actual: string, expected: string): boolean {
   let different = actual.length ^ expected.length;
   for (let index = 0; index < Math.max(actual.length, expected.length); index++) different |= (actual.charCodeAt(index) || 0) ^ (expected.charCodeAt(index) || 0);

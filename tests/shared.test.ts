@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { chartTime, crossed, fairValueGaps, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol } from "../src/shared";
+import { chartTime, crossed, fairValueGaps, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol, zoneNearby } from "../src/shared";
 import { aggregateDailyBars, aggregateHourlyBars, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
@@ -38,6 +38,7 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.match(await readFile("src/worker.ts", "utf8"), /body\.sync !== false/);
   assert.match(await readFile("src/worker.ts", "utf8"), /api\.put\("\/api\/watchlists\/:watchlistId"/);
   assert.match(await readFile("src/worker.ts", "utf8"), /api\.post\("\/api\/stocks\/:stockId\/sync"/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /api\.delete\("\/api\/watchlists\/:watchlistId\/stocks"/);
   assert.match(await readFile("src/style.css", "utf8"), /\.symbol-results \{ min-height: 0; flex: 1; overflow: auto; \}/);
   assert.match(await readFile("src/frontend.tsx", "utf8"), /displayedStocks\.map/);
   assert.match(await readFile("src/frontend.tsx", "utf8"), /bars\.length - 300/);
@@ -69,6 +70,12 @@ test("fair value gaps remain until price fills them", () => {
   assert.deepEqual(fairValueGaps(bars, 2), []);
   bars.push({ high: 104, low: 99, close: 100 });
   assert.deepEqual(fairValueGaps(bars), []);
+});
+
+test("zone scanner includes a touch or nearby price", () => {
+  const bars = Array.from({ length: 14 }, () => ({ high: 101, low: 99, close: 100 })).concat([{ high: 102.4, low: 102.2, close: 102.3 }]);
+  assert.equal(zoneNearby(bars, [{ top: 102, bottom: 100 }]), true);
+  assert.equal(zoneNearby(bars, [{ top: 90, bottom: 88 }]), false);
 });
 
 test("order blocks require a displaced structure break with an FVG", () => {

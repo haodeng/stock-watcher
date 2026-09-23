@@ -1,6 +1,7 @@
 import { CandlestickSeries, createChart, CrosshairMode, HistogramSeries, LineSeries, type SeriesAttachedParameter, type Time } from "lightweight-charts";
 import { IconCheck, IconChevronDown, IconCopy, IconNote, IconPencil, IconPlus, IconSearch, IconTrash, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { chartTime, fairValueGaps, orderBlocks, swings, type FairValueGap } from "./shared";
 import "./style.css";
@@ -10,6 +11,7 @@ type MarketStock = { code: string; name: string; sector: string };
 type Watchlist = { id: number; name: string };
 type Bar = { time: string; open: number; high: number; low: number; close: number; volume: number };
 type Alert = { id: number; code: string; direction: string; target: number; armed: number };
+type ZoneScan = { matches: Array<{ id: number; code: string }>; added: number };
 
 async function api<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const response = await fetch(path, { method, credentials: "same-origin", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
@@ -51,9 +53,58 @@ class PriceZones {
   }
 }
 
+function ZoneScanner({ watchlists, swingMultiplier, fvgMinAtr, obDisplacementAtr }: { watchlists: Watchlist[]; swingMultiplier: number; fvgMinAtr: number; obDisplacementAtr: number }) {
+  const [zone, setZone] = useState("fvg"), [timeframe, setTimeframe] = useState("1d"), [watchlistId, setWatchlistId] = useState<number>(), [loading, setLoading] = useState(false), [result, setResult] = useState("");
+  useEffect(() => setWatchlistId((current) => current ?? watchlists[0]?.id), [watchlists]);
+  const scan = async () => {
+    if (!watchlistId) return;
+    setLoading(true); setResult("");
+    try {
+      const data = await api<ZoneScan>("/api/scans/zones", "POST", { watchlistId, zone, timeframe, swingMultiplier, fvgMinAtr, obDisplacementAtr });
+      setResult(data.matches.length ? `${data.added} added · ${data.matches.map((stock) => stock.code).join(", ")}` : "No matching stocks.");
+    } catch (error) { setResult((error as Error).message); } finally { setLoading(false); }
+  };
+  const form = <form className="zone-scanner" onSubmit={(event) => { event.preventDefault(); void scan(); }}><strong>Zone scanner</strong><label>Zone<select value={zone} onChange={(event) => setZone(event.target.value)}><option value="fvg">Bullish FVG</option><option value="ob">Bullish OB</option></select></label><label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>{[["1d", "1D"], ["1wk", "1W"], ["1mo", "1M"], ["4h", "4H"], ["1h", "1H"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Save to<select value={watchlistId ?? ""} onChange={(event) => setWatchlistId(Number(event.target.value))}>{watchlists.map((watchlist) => <option key={watchlist.id} value={watchlist.id}>{watchlist.name}</option>)}</select></label><button disabled={!watchlistId || loading}>{loading ? "Scanning…" : "Scan & save"}</button>{result && <span>{result}</span>}</form>;
+  return <>{createPortal(form, document.querySelector(".header-actions") ?? document.body)}<WatchlistClearer /><RowRemovers /></>;
+}
+
+function WatchlistClearer() {
+  const [target, setTarget] = useState<Element | null>(null);
+  useEffect(() => setTarget(document.querySelector(".watchlist-title > div:last-child")), []);
+  const clear = () => {
+    const select = document.querySelector(".watchlist-title select") as HTMLSelectElement | null, name = select?.selectedOptions[0]?.text ?? "this watchlist";
+    if (!select?.value || !confirm(`Remove every stock from ${name}?`)) return;
+    void api(`/api/watchlists/${select.value}/stocks`, "DELETE").then(() => { sessionStorage.setItem("clearedWatchlist", select.value); location.reload(); }).catch((error) => alert(error.message));
+  };
+  return target ? createPortal(<button type="button" className="quiet-button clear-watchlist" onClick={clear}>Clear all</button>, target) : null;
+}
+
+function RowRemovers() {
+  const [rows, setRows] = useState<Element[]>([]);
+  useEffect(() => {
+    const list = document.querySelector(".quote-list");
+    if (!list) return;
+    const update = () => setRows([...list.querySelectorAll(".quote-row")]);
+    update(); const observer = new MutationObserver(update); observer.observe(list, { childList: true });
+    return () => observer.disconnect();
+  }, []);
+  const remove = async (row: Element) => {
+    const select = document.querySelector(".watchlist-title select") as HTMLSelectElement | null, code = row.querySelector("strong")?.textContent;
+    if (!select?.value || !code || !confirm(`Remove ${code} from this watchlist?`)) return;
+    try {
+      const stock = (await api<Stock[]>(`/api/watchlists/${select.value}/stocks`)).find((item) => item.code === code);
+      if (!stock) return;
+      await api(`/api/watchlists/${select.value}/stocks/${stock.id}`, "DELETE");
+      sessionStorage.setItem("clearedWatchlist", select.value); location.reload();
+    } catch (error) { alert((error as Error).message); }
+  };
+  return <>{rows.filter((row) => row.isConnected).map((row) => createPortal(<span key="remove" role="button" tabIndex={0} className="icon-button remove row-remove" aria-label="Remove stock" onClick={(event) => { event.preventDefault(); event.stopPropagation(); void remove(row); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); void remove(row); } }}><IconTrash size={16} /></span>, row))}</>;
+}
+
 function Chart({ bars, fit, swingMultiplier }: { bars: Bar[]; fit: boolean; swingMultiplier: number }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [showZigZag, setShowZigZag] = useState(true), [showFvg, setShowFvg] = useState(true), [showOb, setShowOb] = useState(true), [chartSwingMultiplier, setChartSwingMultiplier] = useState(swingMultiplier), [fvgMinAtr, setFvgMinAtr] = useState(0.5), [fvgLimit, setFvgLimit] = useState(3), [obDisplacementAtr, setObDisplacementAtr] = useState(1.5), [obLimit, setObLimit] = useState(2);
+  const [showZigZag, setShowZigZag] = useState(true), [showFvg, setShowFvg] = useState(true), [showOb, setShowOb] = useState(true), [chartSwingMultiplier, setChartSwingMultiplier] = useState(swingMultiplier), [fvgMinAtr, setFvgMinAtr] = useState(0.5), [fvgLimit, setFvgLimit] = useState(3), [obDisplacementAtr, setObDisplacementAtr] = useState(1.5), [obLimit, setObLimit] = useState(2), [scanWatchlists, setScanWatchlists] = useState<Watchlist[]>([]);
+  useEffect(() => { void api<Watchlist[]>("/api/watchlists").then(setScanWatchlists); }, []);
   useEffect(() => {
     if (!ref.current || !bars.length) return;
     const chart = createChart(ref.current, { width: ref.current.clientWidth, height: 500, layout: { background: { color: "#101214" }, textColor: "#a8afb9" }, grid: { vertLines: { color: "#20252b" }, horzLines: { color: "#20252b" } }, crosshair: { mode: CrosshairMode.Normal }, rightPriceScale: { borderColor: "#343a42" }, timeScale: { borderColor: "#343a42" } });
@@ -78,7 +129,7 @@ function Chart({ bars, fit, swingMultiplier }: { bars: Bar[]; fit: boolean; swin
     observer.observe(ref.current);
     return () => { observer.disconnect(); chart.remove(); };
   }, [bars, chartSwingMultiplier, fit, fvgLimit, fvgMinAtr, obDisplacementAtr, obLimit, showFvg, showOb, showZigZag]);
-  return <div className="chart">{bars.length ? <><button className={`fit-chart zigzag-toggle ${showZigZag ? "selected" : ""}`} aria-pressed={showZigZag} onClick={() => setShowZigZag((value) => !value)}>ZigZag {showZigZag ? "on" : "off"}</button><button className={`fit-chart zigzag-toggle ${showFvg ? "selected" : ""}`} aria-pressed={showFvg} onClick={() => setShowFvg((value) => !value)}>FVG {showFvg ? "on" : "off"}</button><button className={`fit-chart zigzag-toggle ${showOb ? "selected" : ""}`} aria-pressed={showOb} onClick={() => setShowOb((value) => !value)}>OB {showOb ? "on" : "off"}</button><details className="zone-settings"><summary>Zone settings</summary><div><label className="zone-setting swing">Swing ATR<select value={chartSwingMultiplier} onChange={(event) => setChartSwingMultiplier(Number(event.target.value))}><option value={1.5}>1.5× ATR</option><option value={2}>2× ATR</option><option value={3}>3× ATR</option></select></label><section className="zone-setting"><strong>FVG</strong><label>Min ATR<input type="number" min="0" step="0.1" value={fvgMinAtr} onChange={(event) => setFvgMinAtr(Math.max(0, Number(event.target.value) || 0))} /></label><label>Max zones<input type="number" min="1" step="1" value={fvgLimit} onChange={(event) => setFvgLimit(Math.max(1, Math.floor(Number(event.target.value) || 1)))} /></label></section><section className="zone-setting"><strong>OB</strong><label>Displacement ATR<input type="number" min="0" step="0.1" value={obDisplacementAtr} onChange={(event) => setObDisplacementAtr(Math.max(0, Number(event.target.value) || 0))} /></label><label>Max zones<input type="number" min="1" step="1" value={obLimit} onChange={(event) => setObLimit(Math.max(1, Math.floor(Number(event.target.value) || 1)))} /></label></section></div></details><div ref={ref} /></> : <p>No price history for this timeframe.</p>}</div>;
+  return <div className="chart">{bars.length ? <><button className={`fit-chart zigzag-toggle ${showZigZag ? "selected" : ""}`} aria-pressed={showZigZag} onClick={() => setShowZigZag((value) => !value)}>ZigZag {showZigZag ? "on" : "off"}</button><button className={`fit-chart zigzag-toggle ${showFvg ? "selected" : ""}`} aria-pressed={showFvg} onClick={() => setShowFvg((value) => !value)}>FVG {showFvg ? "on" : "off"}</button><button className={`fit-chart zigzag-toggle ${showOb ? "selected" : ""}`} aria-pressed={showOb} onClick={() => setShowOb((value) => !value)}>OB {showOb ? "on" : "off"}</button><details className="zone-settings"><summary>Zone settings</summary><div><label className="zone-setting swing">Swing ATR<select value={chartSwingMultiplier} onChange={(event) => setChartSwingMultiplier(Number(event.target.value))}><option value={1.5}>1.5× ATR</option><option value={2}>2× ATR</option><option value={3}>3× ATR</option></select></label><section className="zone-setting"><strong>FVG</strong><label>Min ATR<input type="number" min="0" step="0.1" value={fvgMinAtr} onChange={(event) => setFvgMinAtr(Math.max(0, Number(event.target.value) || 0))} /></label><label>Max zones<input type="number" min="1" step="1" value={fvgLimit} onChange={(event) => setFvgLimit(Math.max(1, Math.floor(Number(event.target.value) || 1)))} /></label></section><section className="zone-setting"><strong>OB</strong><label>Displacement ATR<input type="number" min="0" step="0.1" value={obDisplacementAtr} onChange={(event) => setObDisplacementAtr(Math.max(0, Number(event.target.value) || 0))} /></label><label>Max zones<input type="number" min="1" step="1" value={obLimit} onChange={(event) => setObLimit(Math.max(1, Math.floor(Number(event.target.value) || 1)))} /></label></section></div></details><div ref={ref} /></> : <p>No price history for this timeframe.</p>}<ZoneScanner watchlists={scanWatchlists} swingMultiplier={chartSwingMultiplier} fvgMinAtr={fvgMinAtr} obDisplacementAtr={obDisplacementAtr} /></div>;
 }
 
 function Login({ done }: { done: () => void }) {
@@ -102,7 +153,7 @@ function StockNote({ stock, refresh, message }: { stock: Stock | undefined; refr
 
 function Dashboard() {
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]), [watchlistId, setWatchlistId] = useState<number>(), [stocks, setStocks] = useState<Stock[]>([]), [stockId, setStockId] = useState<number>(), [bars, setBars] = useState<Bar[]>([]), [timeframe, setTimeframe] = useState("1d"), [alerts, setAlerts] = useState<Alert[]>([]), [message, setMessage] = useState(""), [syncing, setSyncing] = useState(false), [pickerOpen, setPickerOpen] = useState(false), [marketStocks, setMarketStocks] = useState<MarketStock[]>([]), [marketError, setMarketError] = useState(""), [adding, setAdding] = useState(false), [copyOpen, setCopyOpen] = useState(false), [changeSort, setChangeSort] = useState<"asc" | "desc">(), [symbolSort, setSymbolSort] = useState<"asc" | "desc">(), [sectorSort, setSectorSort] = useState<"asc" | "desc">(), [sectorFilter, setSectorFilter] = useState(""), [fit, setFit] = useState(false), [swingMultiplier, setSwingMultiplier] = useState(3);
-  const loadWatchlists = async () => { const data = await api<Watchlist[]>("/api/watchlists"); setWatchlists(data); setWatchlistId((current) => current ?? data[0]?.id); };
+  const loadWatchlists = async () => { const data = await api<Watchlist[]>("/api/watchlists"), cleared = Number(sessionStorage.getItem("clearedWatchlist")); sessionStorage.removeItem("clearedWatchlist"); setWatchlists(data); setWatchlistId((current) => current ?? data.find((watchlist) => watchlist.id === cleared)?.id ?? data[0]?.id); };
   const loadStocks = async (id: number) => { const data = await api<Stock[]>(`/api/watchlists/${id}/stocks`); setStocks(data); setStockId((current) => data.some((stock) => stock.id === current) ? current : data[0]?.id); };
   const loadAlerts = () => api<Alert[]>("/api/alerts").then(setAlerts);
   const loadMarketStocks = () => api<MarketStock[]>("/api/market/denmark").then((data) => { setMarketStocks(data); setMarketError(""); }).catch((error) => setMarketError(error.message));

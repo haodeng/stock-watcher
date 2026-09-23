@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { crossed, nasdaqCode, parseCode, sameSecret, stockNote, type Direction, watchlistName, yahooSymbol } from "./shared";
+import { crossed, fairValueGaps, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, type Direction, watchlistName, yahooSymbol, zoneNearby } from "./shared";
 
 type Env = {
   DB: D1Database;
@@ -182,6 +182,10 @@ api.post("/api/watchlists/:watchlistId/stocks", async (context) => {
   await context.env.DB.prepare("INSERT OR IGNORE INTO watchlist_stocks (watchlist_id, stock_id) VALUES (?, ?)").bind(id(context.req.param("watchlistId")), number(body.stockId, "stockId must be numeric")).run();
   return context.json({ ok: true });
 });
+api.delete("/api/watchlists/:watchlistId/stocks", async (context) => {
+  await context.env.DB.prepare("DELETE FROM watchlist_stocks WHERE watchlist_id = ?").bind(id(context.req.param("watchlistId"))).run();
+  return context.json({ ok: true });
+});
 api.delete("/api/watchlists/:watchlistId/stocks/:stockId", async (context) => {
   await context.env.DB.prepare("DELETE FROM watchlist_stocks WHERE watchlist_id = ? AND stock_id = ?").bind(id(context.req.param("watchlistId")), id(context.req.param("stockId"))).run();
   return context.json({ ok: true });
@@ -229,6 +233,23 @@ api.get("/api/bars", async (context) => {
   const column = timeframe === "1h" || timeframe === "4h" ? "trading_time" : "trading_date";
   const bars = await context.env.DB.prepare(`SELECT ${column} AS time, open, high, low, close, volume FROM ${table} WHERE stock_id=? ORDER BY ${column}`).bind(stockId).all();
   return context.json({ bars: timeframe === "1wk" || timeframe === "1mo" ? aggregateDailyBars(bars.results as Bar[], timeframe) : timeframe === "4h" ? aggregateHourlyBars(bars.results as Bar[]) : bars.results });
+});
+api.post("/api/scans/zones", async (context) => {
+  const body = await context.req.json<{ watchlistId?: number; zone?: string; timeframe?: string; swingMultiplier?: number; fvgMinAtr?: number; obDisplacementAtr?: number }>();
+  if (body.zone !== "fvg" && body.zone !== "ob") throw new Error("zone must be fvg or ob");
+  if (body.timeframe !== "1d" && body.timeframe !== "1h" && body.timeframe !== "4h" && body.timeframe !== "1wk" && body.timeframe !== "1mo") throw new Error("timeframe must be 1d, 1wk, 1mo, 4h, or 1h");
+  const watchlistId = number(body.watchlistId, "watchlistId must be numeric"), swingMultiplier = Math.max(0, body.swingMultiplier == null ? 3 : number(body.swingMultiplier, "swingMultiplier must be numeric")), fvgMinAtr = Math.max(0, body.fvgMinAtr == null ? 0.5 : number(body.fvgMinAtr, "fvgMinAtr must be numeric")), obDisplacementAtr = Math.max(0, body.obDisplacementAtr == null ? 1.5 : number(body.obDisplacementAtr, "obDisplacementAtr must be numeric"));
+  const hourly = body.timeframe === "1h" || body.timeframe === "4h", table = hourly ? "hourly_bars" : "daily_bars", column = hourly ? "trading_time" : "trading_date";
+  const rows = await context.env.DB.prepare(`SELECT id, code, time, open, high, low, close, volume FROM (SELECT s.id, s.code, b.${column} AS time, b.open, b.high, b.low, b.close, b.volume, ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY b.${column} DESC) AS position FROM stocks s JOIN (SELECT DISTINCT stock_id FROM watchlist_stocks) ws ON ws.stock_id=s.id JOIN ${table} b ON b.stock_id=s.id) WHERE position <= 350 ORDER BY id, time`).all<{ id: number; code: string; time: string; open: number; high: number; low: number; close: number; volume: number }>();
+  const grouped = new Map<number, { code: string; bars: Bar[] }>();
+  for (const row of rows.results) { const current = grouped.get(row.id) ?? { code: row.code, bars: [] }; current.bars.push(row); grouped.set(row.id, current); }
+  const matches = [...grouped].flatMap(([stockId, stock]) => {
+    const bars = body.timeframe === "1wk" || body.timeframe === "1mo" ? aggregateDailyBars(stock.bars, body.timeframe) : body.timeframe === "4h" ? aggregateHourlyBars(stock.bars) : stock.bars;
+    const zones = body.zone === "fvg" ? fairValueGaps(bars, fvgMinAtr) : orderBlocks(bars, swingMultiplier, obDisplacementAtr, 2, fvgMinAtr);
+    return zoneNearby(bars, zones.filter((zone) => zone.direction === "bullish")) ? [{ id: stockId, code: stock.code }] : [];
+  });
+  const writes = matches.length ? await context.env.DB.batch(matches.map((stock) => context.env.DB.prepare("INSERT OR IGNORE INTO watchlist_stocks (watchlist_id, stock_id) VALUES (?, ?)").bind(watchlistId, stock.id))) : [];
+  return context.json({ matches, added: writes.reduce((total, write) => total + write.meta.changes, 0) });
 });
 api.get("/api/alerts", async (context) => context.json((await context.env.DB.prepare("SELECT a.id, s.code, a.direction, a.target, a.armed FROM alerts a JOIN stocks s ON s.id=a.stock_id ORDER BY a.id DESC").all()).results));
 api.post("/api/alerts", async (context) => {
