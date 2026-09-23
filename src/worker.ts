@@ -68,8 +68,8 @@ async function marketStocks(): Promise<MarketStock[]> {
 }
 
 async function saveBars(db: D1Database, stockId: number, table: "daily_bars" | "hourly_bars", column: "trading_date" | "trading_time", bars: Bar[]): Promise<void> {
-  for (let index = 0; index < bars.length; index += 50) {
-    await db.batch(bars.slice(index, index + 50).map((bar) => db.prepare(`INSERT INTO ${table} (stock_id, ${column}, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(stock_id, ${column}) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close, volume=excluded.volume`).bind(stockId, bar.time, bar.open, bar.high, bar.low, bar.close, bar.volume)));
+  for (let index = 0; index < bars.length; index += 500) {
+    await db.batch(bars.slice(index, index + 500).map((bar) => db.prepare(`INSERT INTO ${table} (stock_id, ${column}, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(stock_id, ${column}) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close, volume=excluded.volume`).bind(stockId, bar.time, bar.open, bar.high, bar.low, bar.close, bar.volume)));
   }
 }
 
