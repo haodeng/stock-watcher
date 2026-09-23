@@ -103,10 +103,16 @@ export function orderBlocks(bars: OhlcBar[], swingMultiplier = 3, displacementAt
   return ["bullish", "bearish"].flatMap((direction) => blocks.filter((block) => block.direction === direction && !bars.slice(block.confirmedAt + 1).some((bar) => direction === "bullish" ? bar.close < block.bottom : bar.close > block.top)).slice(-Math.max(1, Math.floor(limit))));
 }
 
-export function zoneNearby(bars: PriceBar[], zones: Array<Pick<FairValueGap, "top" | "bottom">>): boolean {
+export function zoneNearby(bars: PriceBar[], zones: Array<Pick<FairValueGap, "top" | "bottom">>, proximityAtr = 0.25): boolean {
   const last = bars.at(-1);
   if (!last) return false;
-  return zones.some((zone) => last.low <= zone.top && last.high >= zone.bottom || Math.min(Math.abs(last.close - zone.top), Math.abs(last.close - zone.bottom)) <= atr(bars, bars.length - 1) / 4);
+  return zones.some((zone) => last.low <= zone.top && last.high >= zone.bottom || Math.min(Math.abs(last.close - zone.top), Math.abs(last.close - zone.bottom)) <= atr(bars, bars.length - 1) * proximityAtr);
+}
+
+export function freshBullishZoneNearby(bars: PriceBar[], zones: Array<Pick<FairValueGap, "index" | "top" | "bottom"> & { confirmedAt?: number }>, proximityAtr = 0.25): boolean {
+  const last = bars.at(-1);
+  if (!last) return false;
+  return zones.some((zone) => bars.slice((zone.confirmedAt ?? zone.index) + 1).every((bar) => bar.low > zone.top) && last.close > zone.top && last.close - zone.top <= atr(bars, bars.length - 1) * proximityAtr);
 }
 
 export function sameSecret(actual: string, expected: string): boolean {

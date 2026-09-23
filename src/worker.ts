@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { crossed, fairValueGaps, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, type Direction, watchlistName, yahooSymbol, zoneNearby } from "./shared";
+import { crossed, fairValueGaps, freshBullishZoneNearby, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, type Direction, watchlistName, yahooSymbol, zoneNearby } from "./shared";
 
 type Env = {
   DB: D1Database;
@@ -235,10 +235,13 @@ api.get("/api/bars", async (context) => {
   return context.json({ bars: timeframe === "1wk" || timeframe === "1mo" ? aggregateDailyBars(bars.results as Bar[], timeframe) : timeframe === "4h" ? aggregateHourlyBars(bars.results as Bar[]) : bars.results });
 });
 api.post("/api/scans/zones", async (context) => {
-  const body = await context.req.json<{ watchlistId?: number; zone?: string; timeframe?: string; swingMultiplier?: number; fvgMinAtr?: number; obDisplacementAtr?: number }>();
+  const body = await context.req.json<{ watchlistId?: number; zone?: string; timeframe?: string; swingMultiplier?: number; fvgMinAtr?: number; obDisplacementAtr?: number; proximityAtr?: number; freshOnly?: boolean }>();
   if (body.zone !== "fvg" && body.zone !== "ob") throw new Error("zone must be fvg or ob");
   if (body.timeframe !== "1d" && body.timeframe !== "1h" && body.timeframe !== "4h" && body.timeframe !== "1wk" && body.timeframe !== "1mo") throw new Error("timeframe must be 1d, 1wk, 1mo, 4h, or 1h");
-  const watchlistId = number(body.watchlistId, "watchlistId must be numeric"), swingMultiplier = Math.max(0, body.swingMultiplier == null ? 3 : number(body.swingMultiplier, "swingMultiplier must be numeric")), fvgMinAtr = Math.max(0, body.fvgMinAtr == null ? 0.5 : number(body.fvgMinAtr, "fvgMinAtr must be numeric")), obDisplacementAtr = Math.max(0, body.obDisplacementAtr == null ? 1.5 : number(body.obDisplacementAtr, "obDisplacementAtr must be numeric"));
+  const watchlistId = number(body.watchlistId, "watchlistId must be numeric"), swingMultiplier = Math.max(0, body.swingMultiplier == null ? 3 : number(body.swingMultiplier, "swingMultiplier must be numeric")), fvgMinAtr = Math.max(0, body.fvgMinAtr == null ? 0.5 : number(body.fvgMinAtr, "fvgMinAtr must be numeric")), obDisplacementAtr = Math.max(0, body.obDisplacementAtr == null ? 1.5 : number(body.obDisplacementAtr, "obDisplacementAtr must be numeric")), proximityAtr = body.proximityAtr == null ? 0.25 : number(body.proximityAtr, "proximityAtr must be numeric");
+  if (![0, 0.25, 0.5].includes(proximityAtr)) throw new Error("proximityAtr must be 0, 0.25, or 0.5");
+  if (body.freshOnly != null && typeof body.freshOnly !== "boolean") throw new Error("freshOnly must be boolean");
+  const freshOnly = body.freshOnly !== false && proximityAtr > 0;
   const hourly = body.timeframe === "1h" || body.timeframe === "4h", table = hourly ? "hourly_bars" : "daily_bars", column = hourly ? "trading_time" : "trading_date";
   const rows = await context.env.DB.prepare(`SELECT id, code, time, open, high, low, close, volume FROM (SELECT s.id, s.code, b.${column} AS time, b.open, b.high, b.low, b.close, b.volume, ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY b.${column} DESC) AS position FROM stocks s JOIN (SELECT DISTINCT stock_id FROM watchlist_stocks) ws ON ws.stock_id=s.id JOIN ${table} b ON b.stock_id=s.id) WHERE position <= 350 ORDER BY id, time`).all<{ id: number; code: string; time: string; open: number; high: number; low: number; close: number; volume: number }>();
   const grouped = new Map<number, { code: string; bars: Bar[] }>();
@@ -246,7 +249,8 @@ api.post("/api/scans/zones", async (context) => {
   const matches = [...grouped].flatMap(([stockId, stock]) => {
     const bars = body.timeframe === "1wk" || body.timeframe === "1mo" ? aggregateDailyBars(stock.bars, body.timeframe) : body.timeframe === "4h" ? aggregateHourlyBars(stock.bars) : stock.bars;
     const zones = body.zone === "fvg" ? fairValueGaps(bars, fvgMinAtr) : orderBlocks(bars, swingMultiplier, obDisplacementAtr, 2, fvgMinAtr);
-    return zoneNearby(bars, zones.filter((zone) => zone.direction === "bullish")) ? [{ id: stockId, code: stock.code }] : [];
+    const bullishZones = zones.filter((zone) => zone.direction === "bullish");
+    return (freshOnly ? freshBullishZoneNearby(bars, bullishZones, proximityAtr) : zoneNearby(bars, bullishZones, proximityAtr)) ? [{ id: stockId, code: stock.code }] : [];
   });
   const writes = matches.length ? await context.env.DB.batch(matches.map((stock) => context.env.DB.prepare("INSERT OR IGNORE INTO watchlist_stocks (watchlist_id, stock_id) VALUES (?, ?)").bind(watchlistId, stock.id))) : [];
   return context.json({ matches, added: writes.reduce((total, write) => total + write.meta.changes, 0) });

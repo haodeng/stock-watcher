@@ -54,17 +54,18 @@ class PriceZones {
 }
 
 function ZoneScanner({ watchlists, swingMultiplier, fvgMinAtr, obDisplacementAtr }: { watchlists: Watchlist[]; swingMultiplier: number; fvgMinAtr: number; obDisplacementAtr: number }) {
-  const [zone, setZone] = useState("fvg"), [timeframe, setTimeframe] = useState("1d"), [watchlistId, setWatchlistId] = useState<number>(), [loading, setLoading] = useState(false), [result, setResult] = useState("");
+  const [zone, setZone] = useState("fvg"), [timeframe, setTimeframe] = useState("1d"), [proximityAtr, setProximityAtr] = useState(0.25), [freshOnly, setFreshOnly] = useState(true), [watchlistId, setWatchlistId] = useState<number>(), [loading, setLoading] = useState(false), [result, setResult] = useState("");
   useEffect(() => setWatchlistId((current) => current ?? watchlists[0]?.id), [watchlists]);
   const scan = async () => {
     if (!watchlistId) return;
     setLoading(true); setResult("");
     try {
-      const data = await api<ZoneScan>("/api/scans/zones", "POST", { watchlistId, zone, timeframe, swingMultiplier, fvgMinAtr, obDisplacementAtr });
+      const data = await api<ZoneScan>("/api/scans/zones", "POST", { watchlistId, zone, timeframe, swingMultiplier, fvgMinAtr, obDisplacementAtr, proximityAtr, freshOnly });
+      if (data.added) location.reload();
       setResult(data.matches.length ? `${data.added} added · ${data.matches.map((stock) => stock.code).join(", ")}` : "No matching stocks.");
     } catch (error) { setResult((error as Error).message); } finally { setLoading(false); }
   };
-  const form = <form className="zone-scanner" onSubmit={(event) => { event.preventDefault(); void scan(); }}><strong>Zone scanner</strong><label>Zone<select value={zone} onChange={(event) => setZone(event.target.value)}><option value="fvg">Bullish FVG</option><option value="ob">Bullish OB</option></select></label><label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>{[["1d", "1D"], ["1wk", "1W"], ["1mo", "1M"], ["4h", "4H"], ["1h", "1H"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Save to<select value={watchlistId ?? ""} onChange={(event) => setWatchlistId(Number(event.target.value))}>{watchlists.map((watchlist) => <option key={watchlist.id} value={watchlist.id}>{watchlist.name}</option>)}</select></label><button disabled={!watchlistId || loading}>{loading ? "Scanning…" : "Scan & save"}</button>{result && <span><button type="button" aria-label="Close scan result" onClick={() => setResult("")}>×</button>{result}</span>}</form>;
+  const form = <form className="zone-scanner" onSubmit={(event) => { event.preventDefault(); void scan(); }}><strong>Zone scanner</strong><label>Zone<select value={zone} onChange={(event) => setZone(event.target.value)}><option value="fvg">Bullish FVG</option><option value="ob">Bullish OB</option></select></label><label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>{[["1d", "1D"], ["1wk", "1W"], ["1mo", "1M"], ["4h", "4H"], ["1h", "1H"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Proximity<select value={proximityAtr} onChange={(event) => setProximityAtr(Number(event.target.value))}><option value={0}>In zone only</option><option value={0.25}>Within 0.25 ATR</option><option value={0.5}>Within 0.5 ATR</option></select></label><label>Fresh only<input type="checkbox" checked={freshOnly} onChange={(event) => setFreshOnly(event.target.checked)} /></label><label>Save to<select value={watchlistId ?? ""} onChange={(event) => setWatchlistId(Number(event.target.value))}>{watchlists.map((watchlist) => <option key={watchlist.id} value={watchlist.id}>{watchlist.name}</option>)}</select></label><button disabled={!watchlistId || loading}>{loading ? "Scanning…" : "Scan & save"}</button>{result && <span><button type="button" aria-label="Close scan result" onClick={() => setResult("")}>×</button>{result}</span>}</form>;
   return <>{createPortal(form, document.querySelector(".header-actions") ?? document.body)}<WatchlistClearer /><RowRemovers /></>;
 }
 

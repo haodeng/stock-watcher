@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { chartTime, crossed, fairValueGaps, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol, zoneNearby } from "../src/shared";
+import { chartTime, crossed, fairValueGaps, freshBullishZoneNearby, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol, zoneNearby } from "../src/shared";
 import { aggregateDailyBars, aggregateHourlyBars, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
@@ -44,6 +44,7 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.match(await readFile("src/frontend.tsx", "utf8"), /bars\.length - 300/);
   assert.match(await readFile("src/frontend.tsx", "utf8"), /sectorSort/);
   assert.match(await readFile("src/frontend.tsx", "utf8"), /All sectors/);
+  assert.match(await readFile("src/frontend.tsx", "utf8"), /api<ZoneScan>\("\/api\/scans\/zones"[\s\S]*location\.reload\(\)/);
 });
 
 test("manual sync requests full history", () => {
@@ -75,7 +76,16 @@ test("fair value gaps remain until price fills them", () => {
 test("zone scanner includes a touch or nearby price", () => {
   const bars = Array.from({ length: 14 }, () => ({ high: 101, low: 99, close: 100 })).concat([{ high: 102.4, low: 102.2, close: 102.3 }]);
   assert.equal(zoneNearby(bars, [{ top: 102, bottom: 100 }]), true);
+  assert.equal(zoneNearby(bars, [{ top: 102, bottom: 100 }], 0), false);
   assert.equal(zoneNearby(bars, [{ top: 90, bottom: 88 }]), false);
+});
+
+test("fresh zone scanner excludes a zone entered by an earlier wick", () => {
+  const bars = Array.from({ length: 14 }, () => ({ high: 101, low: 99, close: 100 })).concat([{ high: 102.4, low: 102.2, close: 102.3 }]);
+  const zone = { index: 13, top: 102, bottom: 100 };
+  assert.equal(freshBullishZoneNearby(bars, [zone]), true);
+  bars[14] = { high: 102.4, low: 101.9, close: 102.3 };
+  assert.equal(freshBullishZoneNearby(bars, [zone]), false);
 });
 
 test("order blocks require a displaced structure break with an FVG", () => {
