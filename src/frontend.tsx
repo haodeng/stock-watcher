@@ -2,7 +2,7 @@ import { CandlestickSeries, createChart, CrosshairMode, HistogramSeries, LineSer
 import { IconCheck, IconChevronDown, IconCopy, IconNote, IconPencil, IconPlus, IconSearch, IconTrash, IconX } from "@tabler/icons-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
-import { chartTime, fairValueGaps, swings, type FairValueGap } from "./shared";
+import { chartTime, fairValueGaps, orderBlocks, swings, type FairValueGap } from "./shared";
 import "./style.css";
 
 type Stock = { id: number; code: string; providerSymbol: string; note: string | null; noteUpdatedAt: string | null; last: number | null; change: number | null; changePercent: number | null };
@@ -28,37 +28,41 @@ function badgeText(code: string) { return code.replace(/_DK$/, "").split("_").ma
 const sectorColors: Record<string, string> = { "Communication Services": "#38bdf8", "Consumer Discretionary": "#f59e0b", "Consumer Staples": "#facc15", Energy: "#fb7185", Financials: "#60a5fa", "Health Care": "#f472b6", Industrials: "#a78bfa", "Information Technology": "#34d399", Materials: "#d97706", "Real Estate": "#c084fc", Utilities: "#2dd4bf" };
 function sectorColor(sector: string | undefined) { return sectorColors[sector ?? ""] ?? "#6b7280"; }
 
-class FvgZones {
+class PriceZones {
   private chart?: SeriesAttachedParameter["chart"];
   private series?: SeriesAttachedParameter["series"];
-  constructor(private zones: FairValueGap[], private bars: Bar[]) {}
+  constructor(private zones: Array<Pick<FairValueGap, "index" | "direction" | "top" | "bottom">>, private bars: Bar[], private bullish: string, private bearish: string, private opacity: string, private border = false) {}
   attached({ chart, series }: SeriesAttachedParameter) { this.chart = chart; this.series = series; }
   paneViews() { return [this]; }
   zOrder() { return "bottom" as const; }
-  renderer() {
-    return { draw: () => {}, drawBackground: (target: any) => target.useMediaCoordinateSpace((scope: any) => {
+  private paint(target: any, stroke: boolean) {
+    target.useMediaCoordinateSpace((scope: any) => {
       if (!this.chart || !this.series) return;
       for (const zone of this.zones) {
         const x = this.chart.timeScale().timeToCoordinate(chartTime(this.bars[zone.index].time) as Time), top = this.series.priceToCoordinate(zone.top), bottom = this.series.priceToCoordinate(zone.bottom);
         if (x == null || top == null || bottom == null) continue;
-        scope.context.fillStyle = zone.direction === "bullish" ? "#21b89a20" : "#f04d6120";
-        scope.context.fillRect(x, top, scope.mediaSize.width - x, bottom - top);
+        const color = `${zone.direction === "bullish" ? this.bullish : this.bearish}${stroke ? "80" : this.opacity}`;
+        if (stroke) { scope.context.strokeStyle = color; scope.context.strokeRect(x, top, scope.mediaSize.width - x, bottom - top); } else { scope.context.fillStyle = color; scope.context.fillRect(x, top, scope.mediaSize.width - x, bottom - top); }
       }
-    }) };
+    });
+  }
+  renderer() {
+    return { draw: (target: any) => { if (this.border) this.paint(target, true); }, drawBackground: (target: any) => this.paint(target, false) };
   }
 }
 
 function Chart({ bars, fit, swingMultiplier }: { bars: Bar[]; fit: boolean; swingMultiplier: number }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [showZigZag, setShowZigZag] = useState(true), [showFvg, setShowFvg] = useState(true);
+  const [showZigZag, setShowZigZag] = useState(true), [showFvg, setShowFvg] = useState(true), [showOb, setShowOb] = useState(true), [chartSwingMultiplier, setChartSwingMultiplier] = useState(swingMultiplier), [fvgMinAtr, setFvgMinAtr] = useState(0.5), [fvgLimit, setFvgLimit] = useState(3), [obDisplacementAtr, setObDisplacementAtr] = useState(1.5), [obLimit, setObLimit] = useState(2);
   useEffect(() => {
     if (!ref.current || !bars.length) return;
     const chart = createChart(ref.current, { width: ref.current.clientWidth, height: 500, layout: { background: { color: "#101214" }, textColor: "#a8afb9" }, grid: { vertLines: { color: "#20252b" }, horzLines: { color: "#20252b" } }, crosshair: { mode: CrosshairMode.Normal }, rightPriceScale: { borderColor: "#343a42" }, timeScale: { borderColor: "#343a42" } });
     const series = chart.addSeries(CandlestickSeries, { upColor: "#21b89a", downColor: "#f04d61", borderVisible: false, wickUpColor: "#21b89a", wickDownColor: "#f04d61" });
     series.setData(bars.map((bar) => ({ ...bar, time: chartTime(bar.time) as Time })));
-    if (showFvg) series.attachPrimitive(new FvgZones(fairValueGaps(bars), bars));
+    if (showFvg) series.attachPrimitive(new PriceZones(fairValueGaps(bars, fvgMinAtr, fvgLimit), bars, "#38bdf8", "#a78bfa", "20"));
+    if (showOb) series.attachPrimitive(new PriceZones(orderBlocks(bars, chartSwingMultiplier, obDisplacementAtr, obLimit, fvgMinAtr), bars, "#21b89a", "#f59e0b", "38", true));
     if (showZigZag) {
-      const swingPoints = swings(bars, swingMultiplier);
+      const swingPoints = swings(bars, chartSwingMultiplier);
       const zigZag = chart.addSeries(LineSeries, { color: "#d8b469", lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
       zigZag.setData(swingPoints.map(({ index, direction }) => ({ time: chartTime(bars[index].time) as Time, value: direction === "high" ? bars[index].high : bars[index].low })));
       for (const direction of ["high", "low"] as const) {
@@ -73,8 +77,8 @@ function Chart({ bars, fit, swingMultiplier }: { bars: Bar[]; fit: boolean; swin
     const observer = new ResizeObserver(() => chart.applyOptions({ width: ref.current?.clientWidth ?? 0 }));
     observer.observe(ref.current);
     return () => { observer.disconnect(); chart.remove(); };
-  }, [bars, fit, showFvg, showZigZag, swingMultiplier]);
-  return <div className="chart">{bars.length ? <><button className={`fit-chart zigzag-toggle ${showZigZag ? "selected" : ""}`} aria-pressed={showZigZag} onClick={() => setShowZigZag((value) => !value)}>ZigZag {showZigZag ? "on" : "off"}</button><button className={`fit-chart zigzag-toggle ${showFvg ? "selected" : ""}`} aria-pressed={showFvg} onClick={() => setShowFvg((value) => !value)}>FVG {showFvg ? "on" : "off"}</button><div ref={ref} /></> : <p>No price history for this timeframe.</p>}</div>;
+  }, [bars, chartSwingMultiplier, fit, fvgLimit, fvgMinAtr, obDisplacementAtr, obLimit, showFvg, showOb, showZigZag]);
+  return <div className="chart">{bars.length ? <><button className={`fit-chart zigzag-toggle ${showZigZag ? "selected" : ""}`} aria-pressed={showZigZag} onClick={() => setShowZigZag((value) => !value)}>ZigZag {showZigZag ? "on" : "off"}</button><button className={`fit-chart zigzag-toggle ${showFvg ? "selected" : ""}`} aria-pressed={showFvg} onClick={() => setShowFvg((value) => !value)}>FVG {showFvg ? "on" : "off"}</button><button className={`fit-chart zigzag-toggle ${showOb ? "selected" : ""}`} aria-pressed={showOb} onClick={() => setShowOb((value) => !value)}>OB {showOb ? "on" : "off"}</button><details className="zone-settings"><summary>Zone settings</summary><div><label className="zone-setting swing">Swing ATR<select value={chartSwingMultiplier} onChange={(event) => setChartSwingMultiplier(Number(event.target.value))}><option value={1.5}>1.5× ATR</option><option value={2}>2× ATR</option><option value={3}>3× ATR</option></select></label><section className="zone-setting"><strong>FVG</strong><label>Min ATR<input type="number" min="0" step="0.1" value={fvgMinAtr} onChange={(event) => setFvgMinAtr(Math.max(0, Number(event.target.value) || 0))} /></label><label>Max zones<input type="number" min="1" step="1" value={fvgLimit} onChange={(event) => setFvgLimit(Math.max(1, Math.floor(Number(event.target.value) || 1)))} /></label></section><section className="zone-setting"><strong>OB</strong><label>Displacement ATR<input type="number" min="0" step="0.1" value={obDisplacementAtr} onChange={(event) => setObDisplacementAtr(Math.max(0, Number(event.target.value) || 0))} /></label><label>Max zones<input type="number" min="1" step="1" value={obLimit} onChange={(event) => setObLimit(Math.max(1, Math.floor(Number(event.target.value) || 1)))} /></label></section></div></details><div ref={ref} /></> : <p>No price history for this timeframe.</p>}</div>;
 }
 
 function Login({ done }: { done: () => void }) {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { chartTime, crossed, fairValueGaps, nasdaqCode, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol } from "../src/shared";
+import { chartTime, crossed, fairValueGaps, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol } from "../src/shared";
 import { aggregateDailyBars, aggregateHourlyBars, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
@@ -66,8 +66,22 @@ test("ATR-filtered swings ignore minor reversals", () => {
 test("fair value gaps remain until price fills them", () => {
   const bars = Array.from({ length: 14 }, () => ({ high: 101, low: 99, close: 100 })).concat([{ high: 100, low: 99, close: 100 }, { high: 105, low: 100, close: 104 }, { high: 107, low: 102, close: 106 }]);
   assert.deepEqual(fairValueGaps(bars), [{ index: 16, direction: "bullish", top: 102, bottom: 100 }]);
+  assert.deepEqual(fairValueGaps(bars, 2), []);
   bars.push({ high: 104, low: 99, close: 100 });
   assert.deepEqual(fairValueGaps(bars), []);
+});
+
+test("order blocks require a displaced structure break with an FVG", () => {
+  const values = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 35, 24, 23, 22, 21, 20, 21, 22, 24, 40, 44, 46, 45, 44, 43, 42];
+  const bars = values.map((close) => ({ open: close - 1, high: close + 1, low: close - 1, close }));
+  bars[23] = { open: 25, high: 26, low: 23, close: 24 };
+  bars[24] = { open: 24, high: 41, low: 24, close: 40 };
+  bars[25] = { open: 40, high: 45, low: 39, close: 44 };
+  bars[26] = { open: 44, high: 47, low: 44, close: 46 };
+  assert.deepEqual(orderBlocks(bars), [{ index: 23, confirmedAt: 25, direction: "bullish", top: 26, bottom: 23 }]);
+  assert.deepEqual(orderBlocks(bars, 3, 10), []);
+  bars.push({ open: 22, high: 23, low: 20, close: 21 });
+  assert.deepEqual(orderBlocks(bars), []);
 });
 
 test("four-hour candles follow Copenhagen trading sessions", () => {

@@ -1,7 +1,9 @@
 export type Direction = "above" | "below";
 type PriceBar = { high: number; low: number; close: number };
+type OhlcBar = PriceBar & { open: number };
 type Swing = { index: number; direction: "high" | "low" };
 export type FairValueGap = { index: number; direction: "bullish" | "bearish"; top: number; bottom: number };
+export type OrderBlock = FairValueGap & { confirmedAt: number };
 
 export function parseCode(value: string): string {
   const code = value.trim().toUpperCase();
@@ -66,7 +68,7 @@ export function swings(bars: PriceBar[], multiplier = 2): Swing[] {
   }, []);
 }
 
-export function fairValueGaps(bars: PriceBar[]): FairValueGap[] {
+export function fairValueGaps(bars: PriceBar[], minAtr = 0.5, limit = 3): FairValueGap[] {
   const active: FairValueGap[] = [];
   for (let index = 14; index < bars.length; index++) {
     const bar = bars[index];
@@ -74,11 +76,31 @@ export function fairValueGaps(bars: PriceBar[]): FairValueGap[] {
       const zone = active[zoneIndex];
       if (zone.direction === "bullish" ? bar.low <= zone.bottom : bar.high >= zone.top) active.splice(zoneIndex, 1);
     }
-    const first = bars[index - 2], gap = atr(bars, index) / 2;
-    if (bar.low - first.high >= gap) active.push({ index, direction: "bullish", top: bar.low, bottom: first.high });
-    if (first.low - bar.high >= gap) active.push({ index, direction: "bearish", top: first.low, bottom: bar.high });
+    const zone = fairValueGapAt(bars, index, minAtr);
+    if (zone) active.push(zone);
   }
-  return ["bullish", "bearish"].flatMap((direction) => active.filter((zone) => zone.direction === direction).slice(-3));
+  return ["bullish", "bearish"].flatMap((direction) => active.filter((zone) => zone.direction === direction).slice(-Math.max(1, Math.floor(limit))));
+}
+
+function fairValueGapAt(bars: PriceBar[], index: number, minAtr = 0.5): FairValueGap | undefined {
+  const first = bars[index - 2], bar = bars[index], gap = atr(bars, index) * Math.max(0, minAtr);
+  if (bar.low - first.high >= gap) return { index, direction: "bullish", top: bar.low, bottom: first.high };
+  if (first.low - bar.high >= gap) return { index, direction: "bearish", top: first.low, bottom: bar.high };
+}
+
+export function orderBlocks(bars: OhlcBar[], swingMultiplier = 3, displacementAtr = 1.5, limit = 2, fvgMinAtr = 0.5): OrderBlock[] {
+  const points = swings(bars, swingMultiplier), blocks: OrderBlock[] = [], broken = new Set<number>();
+  for (let index = 14; index < bars.length - 2; index++) {
+    const high = [...points].reverse().find((point) => point.direction === "high" && point.index + 5 < index && !broken.has(point.index));
+    const low = [...points].reverse().find((point) => point.direction === "low" && point.index + 5 < index && !broken.has(point.index));
+    const direction = high && bars[index].close > bars[high.index].high ? "bullish" : low && bars[index].close < bars[low.index].low ? "bearish" : undefined;
+    if (!direction || Math.abs(bars[index].close - bars[index].open) < atr(bars, index) * Math.max(0, displacementAtr)) continue;
+    broken.add(direction === "bullish" ? high!.index : low!.index);
+    const fvg = [index, index + 1, index + 2].map((fvgIndex) => fairValueGapAt(bars, fvgIndex, fvgMinAtr)).find((zone) => zone?.direction === direction);
+    const candle = [...bars.slice(Math.max(0, index - 5), index)].map((bar, offset) => ({ bar, index: Math.max(0, index - 5) + offset })).reverse().find(({ bar }) => direction === "bullish" ? bar.close < bar.open : bar.close > bar.open);
+    if (fvg && candle) blocks.push({ index: candle.index, confirmedAt: fvg.index, direction, top: candle.bar.high, bottom: candle.bar.low });
+  }
+  return ["bullish", "bearish"].flatMap((direction) => blocks.filter((block) => block.direction === direction && !bars.slice(block.confirmedAt + 1).some((bar) => direction === "bullish" ? bar.close < block.bottom : bar.close > block.top)).slice(-Math.max(1, Math.floor(limit))));
 }
 
 export function sameSecret(actual: string, expected: string): boolean {
