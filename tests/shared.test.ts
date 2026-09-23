@@ -47,6 +47,7 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.match(await readFile("src/frontend.tsx", "utf8"), /api<ZoneScan>\("\/api\/scans\/zones"[\s\S]*location\.reload\(\)/);
   assert.match(await readFile("src/frontend.tsx", "utf8"), /for \(const stock of stocks\.values\(\)\) await api\(`\/api\/stocks\/\$\{stock\.id\}\/sync`, "POST"\)/);
   assert.match(await readFile("src/worker.ts", "utf8"), /index \+= 500/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /WHERE \$\{table\}\.open IS NOT excluded\.open/);
 });
 
 test("manual sync requests full history", () => {
