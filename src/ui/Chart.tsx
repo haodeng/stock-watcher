@@ -1,4 +1,3 @@
-import { IconTrash } from "@tabler/icons-react";
 import {
   CandlestickSeries,
   createChart,
@@ -9,7 +8,6 @@ import {
   type Time,
 } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   chartTime,
   fairValueGaps,
@@ -17,8 +15,7 @@ import {
   swings,
   type FairValueGap,
 } from "../shared";
-import { api } from "./api";
-import type { Bar, Stock, Watchlist, ZoneScan } from "./types";
+import type { Bar, ZoneSettings } from "./types";
 
 class PriceZones {
   private chart?: SeriesAttachedParameter["chart"];
@@ -84,275 +81,21 @@ class PriceZones {
   }
 }
 
-function ZoneScanner({
-  watchlists,
-  swingMultiplier,
-  fvgMinAtr,
-  obDisplacementAtr,
-}: {
-  watchlists: Watchlist[];
-  swingMultiplier: number;
-  fvgMinAtr: number;
-  obDisplacementAtr: number;
-}) {
-  const [zone, setZone] = useState("fvg"),
-    [timeframe, setTimeframe] = useState("1d"),
-    [proximityAtr, setProximityAtr] = useState(0.25),
-    [freshOnly, setFreshOnly] = useState(true),
-    [watchlistId, setWatchlistId] = useState<number>(),
-    [loading, setLoading] = useState(false),
-    [result, setResult] = useState("");
-  useEffect(
-    () => setWatchlistId((current) => current ?? watchlists[0]?.id),
-    [watchlists],
-  );
-  const scan = async () => {
-    if (!watchlistId) return;
-    setLoading(true);
-    setResult("");
-    try {
-      const data = await api<ZoneScan>("/api/scans/zones", "POST", {
-        watchlistId,
-        zone,
-        timeframe,
-        swingMultiplier,
-        fvgMinAtr,
-        obDisplacementAtr,
-        proximityAtr,
-        freshOnly,
-      });
-      if (data.added) location.reload();
-      setResult(
-        data.matches.length
-          ? `${data.added} added · ${data.matches.map((stock) => stock.code).join(", ")}`
-          : "No matching stocks.",
-      );
-    } catch (error) {
-      setResult((error as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  };
-  const form = (
-    <form
-      className="zone-scanner"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void scan();
-      }}
-    >
-      <strong>Zone scanner</strong>
-      <label>
-        Zone
-        <select value={zone} onChange={(event) => setZone(event.target.value)}>
-          <option value="fvg">Bullish FVG</option>
-          <option value="ob">Bullish OB</option>
-        </select>
-      </label>
-      <label>
-        Timeframe
-        <select
-          value={timeframe}
-          onChange={(event) => setTimeframe(event.target.value)}
-        >
-          {[
-            ["1d", "1D"],
-            ["1wk", "1W"],
-            ["1mo", "1M"],
-            ["4h", "4H"],
-            ["1h", "1H"],
-          ].map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Proximity
-        <select
-          value={proximityAtr}
-          onChange={(event) => setProximityAtr(Number(event.target.value))}
-        >
-          <option value={0}>In zone only</option>
-          <option value={0.25}>Within 0.25 ATR</option>
-          <option value={0.5}>Within 0.5 ATR</option>
-        </select>
-      </label>
-      <label>
-        Fresh only
-        <input
-          type="checkbox"
-          checked={freshOnly}
-          onChange={(event) => setFreshOnly(event.target.checked)}
-        />
-      </label>
-      <label>
-        Save to
-        <select
-          value={watchlistId ?? ""}
-          onChange={(event) => setWatchlistId(Number(event.target.value))}
-        >
-          {watchlists.map((watchlist) => (
-            <option key={watchlist.id} value={watchlist.id}>
-              {watchlist.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button disabled={!watchlistId || loading}>
-        {loading ? "Scanning…" : "Scan & save"}
-      </button>
-      {result && (
-        <span>
-          <button
-            type="button"
-            aria-label="Close scan result"
-            onClick={() => setResult("")}
-          >
-            ×
-          </button>
-          {result}
-        </span>
-      )}
-    </form>
-  );
-  return (
-    <>
-      {createPortal(
-        form,
-        document.querySelector(".header-actions") ?? document.body,
-      )}
-      <WatchlistClearer />
-      <RowRemovers />
-    </>
-  );
-}
-
-function WatchlistClearer() {
-  const [target, setTarget] = useState<Element | null>(null);
-  useEffect(
-    () =>
-      setTarget(document.querySelector(".watchlist-title > div:last-child")),
-    [],
-  );
-  const clear = () => {
-    const select = document.querySelector(
-        ".watchlist-title select",
-      ) as HTMLSelectElement | null,
-      name = select?.selectedOptions[0]?.text ?? "this watchlist";
-    if (!select?.value || !confirm(`Remove every stock from ${name}?`)) return;
-    void api(`/api/watchlists/${select.value}/stocks`, "DELETE")
-      .then(() => {
-        sessionStorage.setItem("clearedWatchlist", select.value);
-        location.reload();
-      })
-      .catch((error) => alert(error.message));
-  };
-  return target
-    ? createPortal(
-        <button
-          type="button"
-          className="quiet-button clear-watchlist"
-          onClick={clear}
-        >
-          Clear all
-        </button>,
-        target,
-      )
-    : null;
-}
-
-function RowRemovers() {
-  const [rows, setRows] = useState<Element[]>([]);
-  useEffect(() => {
-    const list = document.querySelector(".quote-list");
-    if (!list) return;
-    const update = () => setRows([...list.querySelectorAll(".quote-row")]);
-    update();
-    const observer = new MutationObserver(update);
-    observer.observe(list, { childList: true });
-    return () => observer.disconnect();
-  }, []);
-  const remove = async (row: Element) => {
-    const select = document.querySelector(
-        ".watchlist-title select",
-      ) as HTMLSelectElement | null,
-      code = row.querySelector("strong")?.textContent;
-    if (
-      !select?.value ||
-      !code ||
-      !confirm(`Remove ${code} from this watchlist?`)
-    )
-      return;
-    try {
-      const stock = (
-        await api<Stock[]>(`/api/watchlists/${select.value}/stocks`)
-      ).find((item) => item.code === code);
-      if (!stock) return;
-      await api(`/api/watchlists/${select.value}/stocks/${stock.id}`, "DELETE");
-      sessionStorage.setItem("clearedWatchlist", select.value);
-      location.reload();
-    } catch (error) {
-      alert((error as Error).message);
-    }
-  };
-  return (
-    <>
-      {rows
-        .filter((row) => row.isConnected)
-        .map((row) =>
-          createPortal(
-            <span
-              key="remove"
-              role="button"
-              tabIndex={0}
-              className="icon-button remove row-remove"
-              aria-label="Remove stock"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                void remove(row);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void remove(row);
-                }
-              }}
-            >
-              <IconTrash size={16} />
-            </span>,
-            row,
-          ),
-        )}
-    </>
-  );
-}
-
 export function Chart({
   bars,
   fit,
-  swingMultiplier,
+  settings,
+  onSettingsChange,
 }: {
   bars: Bar[];
   fit: boolean;
-  swingMultiplier: number;
+  settings: ZoneSettings;
+  onSettingsChange: (settings: ZoneSettings) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [showZigZag, setShowZigZag] = useState(true),
     [showFvg, setShowFvg] = useState(true),
-    [showOb, setShowOb] = useState(true),
-    [chartSwingMultiplier, setChartSwingMultiplier] = useState(swingMultiplier),
-    [fvgMinAtr, setFvgMinAtr] = useState(0.5),
-    [fvgLimit, setFvgLimit] = useState(3),
-    [obDisplacementAtr, setObDisplacementAtr] = useState(1.5),
-    [obLimit, setObLimit] = useState(2),
-    [scanWatchlists, setScanWatchlists] = useState<Watchlist[]>([]);
-  useEffect(() => {
-    void api<Watchlist[]>("/api/watchlists").then(setScanWatchlists);
-  }, []);
+    [showOb, setShowOb] = useState(true);
   useEffect(() => {
     if (!ref.current || !bars.length) return;
     const chart = createChart(ref.current, {
@@ -380,7 +123,7 @@ export function Chart({
     if (showFvg)
       series.attachPrimitive(
         new PriceZones(
-          fairValueGaps(bars, fvgMinAtr, fvgLimit),
+          fairValueGaps(bars, settings.fvgMinAtr, settings.fvgLimit),
           bars,
           "#38bdf8",
           "#a78bfa",
@@ -392,10 +135,10 @@ export function Chart({
         new PriceZones(
           orderBlocks(
             bars,
-            chartSwingMultiplier,
-            obDisplacementAtr,
-            obLimit,
-            fvgMinAtr,
+            settings.swingMultiplier,
+            settings.obDisplacementAtr,
+            settings.obLimit,
+            settings.fvgMinAtr,
           ),
           bars,
           "#22c55e",
@@ -405,7 +148,7 @@ export function Chart({
         ),
       );
     if (showZigZag) {
-      const swingPoints = swings(bars, chartSwingMultiplier);
+      const swingPoints = swings(bars, settings.swingMultiplier);
       const zigZag = chart.addSeries(LineSeries, {
         color: "#d8b469",
         lineWidth: 1,
@@ -475,12 +218,8 @@ export function Chart({
     };
   }, [
     bars,
-    chartSwingMultiplier,
+    settings,
     fit,
-    fvgLimit,
-    fvgMinAtr,
-    obDisplacementAtr,
-    obLimit,
     showFvg,
     showOb,
     showZigZag,
@@ -516,9 +255,12 @@ export function Chart({
               <label className="zone-setting swing">
                 Swing ATR
                 <select
-                  value={chartSwingMultiplier}
+                  value={settings.swingMultiplier}
                   onChange={(event) =>
-                    setChartSwingMultiplier(Number(event.target.value))
+                    onSettingsChange({
+                      ...settings,
+                      swingMultiplier: Number(event.target.value),
+                    })
                   }
                 >
                   <option value={1.5}>1.5× ATR</option>
@@ -534,9 +276,12 @@ export function Chart({
                     type="number"
                     min="0"
                     step="0.1"
-                    value={fvgMinAtr}
+                    value={settings.fvgMinAtr}
                     onChange={(event) =>
-                      setFvgMinAtr(Math.max(0, Number(event.target.value) || 0))
+                      onSettingsChange({
+                        ...settings,
+                        fvgMinAtr: Math.max(0, Number(event.target.value) || 0),
+                      })
                     }
                   />
                 </label>
@@ -546,14 +291,15 @@ export function Chart({
                     type="number"
                     min="1"
                     step="1"
-                    value={fvgLimit}
+                    value={settings.fvgLimit}
                     onChange={(event) =>
-                      setFvgLimit(
-                        Math.max(
+                      onSettingsChange({
+                        ...settings,
+                        fvgLimit: Math.max(
                           1,
                           Math.floor(Number(event.target.value) || 1),
                         ),
-                      )
+                      })
                     }
                   />
                 </label>
@@ -566,11 +312,15 @@ export function Chart({
                     type="number"
                     min="0"
                     step="0.1"
-                    value={obDisplacementAtr}
+                    value={settings.obDisplacementAtr}
                     onChange={(event) =>
-                      setObDisplacementAtr(
-                        Math.max(0, Number(event.target.value) || 0),
-                      )
+                      onSettingsChange({
+                        ...settings,
+                        obDisplacementAtr: Math.max(
+                          0,
+                          Number(event.target.value) || 0,
+                        ),
+                      })
                     }
                   />
                 </label>
@@ -580,14 +330,15 @@ export function Chart({
                     type="number"
                     min="1"
                     step="1"
-                    value={obLimit}
+                    value={settings.obLimit}
                     onChange={(event) =>
-                      setObLimit(
-                        Math.max(
+                      onSettingsChange({
+                        ...settings,
+                        obLimit: Math.max(
                           1,
                           Math.floor(Number(event.target.value) || 1),
                         ),
-                      )
+                      })
                     }
                   />
                 </label>
@@ -599,12 +350,6 @@ export function Chart({
       ) : (
         <p>No price history for this timeframe.</p>
       )}
-      <ZoneScanner
-        watchlists={scanWatchlists}
-        swingMultiplier={chartSwingMultiplier}
-        fvgMinAtr={fvgMinAtr}
-        obDisplacementAtr={obDisplacementAtr}
-      />
     </div>
   );
 }

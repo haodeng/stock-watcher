@@ -39,19 +39,21 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.match(await readFile("src/worker.ts", "utf8"), /api\.put\("\/api\/watchlists\/:watchlistId"/);
   assert.match(await readFile("src/worker.ts", "utf8"), /api\.post\("\/api\/stocks\/:stockId\/sync"/);
   assert.match(await readFile("src/worker.ts", "utf8"), /api\.delete\("\/api\/watchlists\/:watchlistId\/stocks"/);
-  const [style, frontend, chart, apiClient] = await Promise.all([
+  const [style, frontend, chart, scanner, syncWorkflow] = await Promise.all([
     readFile("src/style.css", "utf8"),
     readFile("src/frontend.tsx", "utf8"),
     readFile("src/ui/Chart.tsx", "utf8"),
-    readFile("src/ui/api.ts", "utf8"),
+    readFile("src/ui/ZoneScanner.tsx", "utf8"),
+    readFile("src/ui/sync.ts", "utf8"),
   ]);
   assert.match(style, /\.symbol-results\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?flex:\s*1;[\s\S]*?overflow:\s*auto;/);
   assert.match(frontend, /displayedStocks\.map/);
   assert.match(chart, /bars\.length - 300/);
   assert.match(frontend, /sectorSort/);
   assert.match(frontend, /All sectors/);
-  assert.match(chart, /api<ZoneScan>\("\/api\/scans\/zones"[\s\S]*location\.reload\(\)/);
-  assert.match(apiClient, /for \(const stock of stocks\.values\(\)\)\s+await api\(`\/api\/stocks\/\$\{stock\.id\}\/sync`, "POST"\)/);
+  assert.match(scanner, /api<ZoneScan>\("\/api\/scans\/zones"/);
+  assert.doesNotMatch(chart, /document\.querySelector|createPortal|MutationObserver/);
+  assert.match(syncWorkflow, /for \(const stock of stocks\.values\(\)\)\s+await api\(`\/api\/stocks\/\$\{stock\.id\}\/sync`, "POST"\)/);
   assert.match(await readFile("src/worker.ts", "utf8"), /index \+= 500/);
   assert.match(await readFile("src/worker.ts", "utf8"), /WHERE \$\{table\}\.open IS NOT excluded\.open/);
 });

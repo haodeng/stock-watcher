@@ -29,3 +29,10 @@ export type ZoneScan = {
   matches: Array<{ id: number; code: string }>;
   added: number;
 };
+export type ZoneSettings = {
+  swingMultiplier: number;
+  fvgMinAtr: number;
+  fvgLimit: number;
+  obDisplacementAtr: number;
+  obLimit: number;
+};

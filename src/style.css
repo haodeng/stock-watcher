@@ -8,6 +8,7 @@
     sans-serif;
   background: #0d0f11;
   color: #e5e7eb;
+  --modal-bg: #1d1f22;
 }
 * {
   box-sizing: border-box;
@@ -150,7 +151,7 @@ button:focus-visible {
   color: #f0747f;
 }
 .quote-head,
-.quote-row {
+.quote-select {
   display: grid;
   grid-template-columns:
     minmax(130px, 1.55fr) minmax(0, 0.88fr) minmax(0, 0.82fr)
@@ -167,7 +168,7 @@ button:focus-visible {
   border-bottom: 1px solid #343840;
 }
 .quote-head span:not(:first-child),
-.quote-row > span:not(:first-child) {
+.quote-select > span:not(:first-child) {
   text-align: right;
 }
 .quote-list {
@@ -175,23 +176,25 @@ button:focus-visible {
   max-height: calc(100vh - 175px);
 }
 .quote-row {
+  position: relative;
+  border-bottom: 1px solid #292d33;
+}
+.quote-select {
   width: 100%;
   min-height: 42px;
   padding: 0 16px;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid #292d33;
   text-align: left;
   font-size: 14px;
   letter-spacing: 0.01em;
 }
-.quote-row:hover {
+.quote-row:hover .quote-select {
   background: #181b20;
 }
-.quote-row.selected {
+.quote-row.selected .quote-select {
   background: #2b2d30;
   box-shadow: inset 0 0 0 2px #b7bcc2;
-  position: relative;
   z-index: 1;
 }
 .quote-symbol {
@@ -371,16 +374,16 @@ button:focus-visible {
     margin-inline: -12px;
   }
   .quote-head,
-  .quote-row {
+  .quote-select {
     grid-template-columns:
       minmax(100px, 1.35fr) minmax(0, 0.85fr) minmax(0, 0.85fr) 28px;
     padding-inline: 12px;
   }
   .quote-head span:nth-child(3),
-  .quote-row > span:nth-child(3) {
+  .quote-select > span:nth-child(3) {
     display: none;
   }
-  .quote-row {
+  .quote-select {
     min-height: 46px;
     font-size: 14px;
   }
@@ -394,9 +397,6 @@ button:focus-visible {
   .chart {
     min-height: 340px;
   }
-}
-:root {
-  --modal-bg: #1d1f22;
 }
 .symbol-backdrop {
   position: fixed;
@@ -813,33 +813,7 @@ button:focus-visible {
   padding: 4px 6px;
   font-size: 12px;
 }
-select[aria-label="Swing sensitivity"] {
-  display: none;
-}
 .zone-scanner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid #2e333a;
-  color: #9ba2ac;
-  font-size: 12px;
-}
-.zone-scanner label {
-  display: grid;
-  gap: 3px;
-}
-.zone-scanner select,
-.zone-scanner button {
-  padding: 6px 8px;
-  font-size: 12px;
-}
-.zone-scanner span {
-  width: 100%;
-  color: #d7dbe0;
-}
-.header-actions .zone-scanner {
   position: relative;
   display: grid;
   grid-auto-flow: column;
@@ -847,32 +821,31 @@ select[aria-label="Swing sensitivity"] {
   align-items: end;
   gap: 8px;
   margin-left: 16px;
-  padding: 0;
-  border: 0;
+  color: #9ba2ac;
+  font-size: 12px;
 }
-.header-actions .zone-scanner strong {
-  display: none;
-}
-.header-actions .zone-scanner label {
+.zone-scanner label {
+  display: grid;
   grid-template-rows: 12px 32px;
   gap: 1px;
   font-size: 10px;
   line-height: 12px;
   letter-spacing: 0.02em;
 }
-.header-actions .zone-scanner select,
-.header-actions .zone-scanner button {
+.zone-scanner select,
+.zone-scanner button {
   height: 32px;
   padding: 6px 8px;
+  font-size: 12px;
   white-space: nowrap;
 }
-.header-actions .zone-scanner input[type="checkbox"] {
+.zone-scanner input[type="checkbox"] {
   width: 16px;
   height: 16px;
   align-self: center;
   margin: 0;
 }
-.header-actions .zone-scanner span {
+.zone-scanner span {
   position: absolute;
   z-index: 3;
   top: calc(100% + 6px);
@@ -883,7 +856,7 @@ select[aria-label="Swing sensitivity"] {
   border: 1px solid #353a42;
   background: #171a1e;
 }
-.header-actions .zone-scanner span button {
+.zone-scanner span button {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -891,12 +864,6 @@ select[aria-label="Swing sensitivity"] {
 }
 .clear-watchlist {
   color: #f0747f;
-}
-.watchlist-title > div > .icon-button.remove {
-  display: none;
-}
-.quote-row {
-  position: relative;
 }
 .row-remove {
   position: absolute;

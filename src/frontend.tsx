@@ -23,13 +23,15 @@ import { AlertsPanel } from "./ui/AlertsPanel";
 import { Chart } from "./ui/Chart";
 import { StockNote } from "./ui/StockNote";
 import { SymbolPicker } from "./ui/SymbolPicker";
+import { syncAllStocks } from "./ui/sync";
+import { ZoneScanner } from "./ui/ZoneScanner";
 import type {
   Alert,
   Bar,
   MarketStock,
   Stock,
   Watchlist,
-  ZoneScan,
+  ZoneSettings,
 } from "./ui/types";
 import "./style.css";
 
@@ -152,7 +154,13 @@ function Dashboard() {
     [stockSearch, setStockSearch] = useState(""),
     [alertsOpen, setAlertsOpen] = useState(false),
     [fit, setFit] = useState(false),
-    [swingMultiplier, setSwingMultiplier] = useState(3);
+    [zoneSettings, setZoneSettings] = useState<ZoneSettings>({
+      swingMultiplier: 3,
+      fvgMinAtr: 0.5,
+      fvgLimit: 3,
+      obDisplacementAtr: 1.5,
+      obLimit: 2,
+    });
   const loadWatchlists = async () => {
     const data = await api<Watchlist[]>("/api/watchlists"),
       cleared = Number(sessionStorage.getItem("clearedWatchlist"));
@@ -250,17 +258,25 @@ function Dashboard() {
     await loadWatchlists();
     setMessage("Watchlist renamed.");
   };
-  const removeStock = async () => {
-    if (
-      !watchlistId ||
-      !stockId ||
-      !confirm("Remove this stock from the current watchlist?")
-    )
+  const removeStock = async (stock: Stock) => {
+    if (!watchlistId || !confirm(`Remove ${stock.code} from this watchlist?`))
       return;
-    await api(`/api/watchlists/${watchlistId}/stocks/${stockId}`, "DELETE");
+    await api(`/api/watchlists/${watchlistId}/stocks/${stock.id}`, "DELETE");
+    await loadStocks(watchlistId);
+    if (stock.id === stockId) setBars([]);
+    setMessage("Stock removed from this watchlist.");
+  };
+  const clearWatchlist = async () => {
+    const name = watchlists.find((watchlist) => watchlist.id === watchlistId)?.name;
+    if (!watchlistId || !confirm(`Remove every stock from ${name ?? "this watchlist"}?`)) return;
+    await api(`/api/watchlists/${watchlistId}/stocks`, "DELETE");
     await loadStocks(watchlistId);
     setBars([]);
-    setMessage("Stock removed from this watchlist.");
+    setMessage("Watchlist cleared.");
+  };
+  const refreshDashboard = async () => {
+    await loadWatchlists();
+    if (watchlistId) await loadStocks(watchlistId);
   };
   const copyStock = async (form: HTMLFormElement) => {
     if (!stockId) return;
@@ -329,7 +345,7 @@ function Dashboard() {
               onClick={() => {
                 setSyncing(true);
                 setMessage("Syncing data…");
-                void api("/api/sync", "POST")
+                void syncAllStocks()
                   .then(() => {
                     setMessage("Data synced.");
                     return stockId
@@ -344,6 +360,11 @@ function Dashboard() {
             >
               {syncing ? "Syncing…" : "Sync data"}
             </button>
+            <ZoneScanner
+              watchlists={watchlists}
+              settings={zoneSettings}
+              refresh={refreshDashboard}
+            />
           </div>
         </div>
         <button
@@ -411,14 +432,13 @@ function Dashboard() {
                 <IconCopy size={20} />
               </button>
               <button
-                className="icon-button remove"
-                title="Remove selected stock"
-                disabled={!stockId}
+                className="quiet-button clear-watchlist"
+                disabled={!stocks.length}
                 onClick={() =>
-                  void removeStock().catch((error) => setMessage(error.message))
+                  void clearWatchlist().catch((error) => setMessage(error.message))
                 }
               >
-                <IconTrash size={20} />
+                Clear all
               </button>
             </div>
           </div>
@@ -524,45 +544,60 @@ function Dashboard() {
           <div className="quote-list">
             {displayedStocks.length ? (
               displayedStocks.map((stock) => (
-                <button
+                <div
                   key={stock.id}
-                  title={
-                    [companyName(stock.code), stockSector(stock.code)]
-                      .filter(Boolean)
-                      .join(" · ") || stock.code
-                  }
                   className={`quote-row ${stock.id === stockId ? "selected" : ""}`}
-                  onClick={() => setStockId(stock.id)}
                 >
-                  <span className="quote-symbol">
-                    <i style={badge(stock.code)}>{badgeText(stock.code)}</i>
-                    <strong>{stock.code}</strong>
-                    {stock.note && (
-                      <IconNote
-                        className="note-indicator"
-                        size={17}
-                        aria-label="Has note"
-                      />
-                    )}
-                  </span>
-                  <span>{formatPrice(stock.last)}</span>
-                  <span className={tone(stock.change)}>
-                    {formatChange(stock.change)}
-                  </span>
-                  <span className={tone(stock.changePercent)}>
-                    {formatChange(stock.changePercent, true)}
-                  </span>
-                  <span
-                    className="sector-cell"
-                    title={stockSector(stock.code) || "No sector"}
+                  <button
+                    title={
+                      [companyName(stock.code), stockSector(stock.code)]
+                        .filter(Boolean)
+                        .join(" · ") || stock.code
+                    }
+                    className="quote-select"
+                    onClick={() => setStockId(stock.id)}
                   >
-                    <i
-                      style={{
-                        background: sectorColor(stockSector(stock.code)),
-                      }}
-                    />
-                  </span>
-                </button>
+                    <span className="quote-symbol">
+                      <i style={badge(stock.code)}>{badgeText(stock.code)}</i>
+                      <strong>{stock.code}</strong>
+                      {stock.note && (
+                        <IconNote
+                          className="note-indicator"
+                          size={17}
+                          aria-label="Has note"
+                        />
+                      )}
+                    </span>
+                    <span>{formatPrice(stock.last)}</span>
+                    <span className={tone(stock.change)}>
+                      {formatChange(stock.change)}
+                    </span>
+                    <span className={tone(stock.changePercent)}>
+                      {formatChange(stock.changePercent, true)}
+                    </span>
+                    <span
+                      className="sector-cell"
+                      title={stockSector(stock.code) || "No sector"}
+                    >
+                      <i
+                        style={{
+                          background: sectorColor(stockSector(stock.code)),
+                        }}
+                      />
+                    </span>
+                  </button>
+                  <button
+                    className="icon-button remove row-remove"
+                    aria-label={`Remove ${stock.code}`}
+                    onClick={() =>
+                      void removeStock(stock).catch((error) =>
+                        setMessage(error.message),
+                      )
+                    }
+                  >
+                    <IconTrash size={16} />
+                  </button>
+                </div>
               ))
             ) : (
               <p className="watchlist-empty">
@@ -621,17 +656,6 @@ function Dashboard() {
                 </button>
               ))}
             </div>
-            <select
-              aria-label="Swing sensitivity"
-              value={swingMultiplier}
-              onChange={(event) =>
-                setSwingMultiplier(Number(event.target.value))
-              }
-            >
-              <option value={1.5}>Swing 1.5× ATR</option>
-              <option value={2}>Swing 2× ATR</option>
-              <option value={3}>Swing 3× ATR</option>
-            </select>
             <button
               className="sync-stock"
               disabled={!selected || syncing}
@@ -653,7 +677,12 @@ function Dashboard() {
               Alerts{alerts.length ? ` (${alerts.length})` : ""}
             </button>
           </div>
-          <Chart bars={bars} fit={fit} swingMultiplier={swingMultiplier} />
+          <Chart
+            bars={bars}
+            fit={fit}
+            settings={zoneSettings}
+            onSettingsChange={setZoneSettings}
+          />
           <StockNote
             stock={selected}
             refresh={refreshStocks}

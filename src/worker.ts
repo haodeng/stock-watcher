@@ -132,16 +132,6 @@ async function checkAlerts(env: Env): Promise<void> {
   }
 }
 
-async function syncAll(env: Env): Promise<void> {
-  const stocks = await env.DB.prepare("SELECT DISTINCT s.id, s.code FROM stocks s JOIN watchlist_stocks ws ON ws.stock_id = s.id").all<{ id: number; code: string }>();
-  for (const stock of stocks.results) {
-    const symbol = yahooSymbol(stock.code);
-    await env.DB.prepare("UPDATE stocks SET provider_symbol = ? WHERE id = ?").bind(symbol, stock.id).run();
-    await syncStock(env, stock.id, symbol);
-  }
-  await checkAlerts(env);
-}
-
 api.onError((error, context) => context.json({ error: error.message || "request failed" }, 400));
 api.use("/api/*", async (context, next) => {
   if (context.req.path === "/api/session" && context.req.method === "POST") return next();
@@ -210,10 +200,6 @@ api.post("/api/stocks", async (context) => {
   await context.env.DB.prepare("INSERT OR IGNORE INTO watchlist_stocks (watchlist_id, stock_id) VALUES (?, ?)").bind(watchlistId, stockId).run();
   if (!existing && body.sync !== false) await syncStock(context.env, stockId, symbol);
   return context.json({ id: stockId }, 201);
-});
-api.post("/api/sync", async (context) => {
-  await syncAll(context.env);
-  return context.json({ ok: true });
 });
 api.post("/api/stocks/:stockId/sync", async (context) => {
   const stockId = id(context.req.param("stockId"));
