@@ -8,12 +8,8 @@ Private Denmark-stock dashboard: React frontend, Cloudflare Worker API, D1 stora
 npm install
 npx wrangler d1 create stock-watcher
 # Put the returned database_id in wrangler.jsonc.
-npx wrangler d1 execute stock-watcher --local --file=migrations/0001_initial.sql
-npx wrangler d1 execute stock-watcher --file=migrations/0001_initial.sql --remote
-npx wrangler d1 execute stock-watcher --local --file=migrations/0002_stock_notes.sql
-npx wrangler d1 execute stock-watcher --file=migrations/0002_stock_notes.sql --remote
-npx wrangler d1 execute stock-watcher --local --file=migrations/0003_note_timestamp.sql
-npx wrangler d1 execute stock-watcher --file=migrations/0003_note_timestamp.sql --remote
+npm run db:migrate:local
+npx wrangler d1 migrations apply stock-watcher --remote
 npx wrangler secret put APP_ACCESS_KEY
 npx wrangler secret put SESSION_SECRET
 npm run dev

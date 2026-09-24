@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "npm run build && wrangler dev",
+    "dev": "npm run db:migrate:local && npm run build && wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply stock-watcher --local",
     "build": "vite build && tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "deploy": "npm run build && wrangler deploy"
