@@ -39,13 +39,19 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.match(await readFile("src/worker.ts", "utf8"), /api\.put\("\/api\/watchlists\/:watchlistId"/);
   assert.match(await readFile("src/worker.ts", "utf8"), /api\.post\("\/api\/stocks\/:stockId\/sync"/);
   assert.match(await readFile("src/worker.ts", "utf8"), /api\.delete\("\/api\/watchlists\/:watchlistId\/stocks"/);
-  assert.match(await readFile("src/style.css", "utf8"), /\.symbol-results \{ min-height: 0; flex: 1; overflow: auto; \}/);
-  assert.match(await readFile("src/frontend.tsx", "utf8"), /displayedStocks\.map/);
-  assert.match(await readFile("src/frontend.tsx", "utf8"), /bars\.length - 300/);
-  assert.match(await readFile("src/frontend.tsx", "utf8"), /sectorSort/);
-  assert.match(await readFile("src/frontend.tsx", "utf8"), /All sectors/);
-  assert.match(await readFile("src/frontend.tsx", "utf8"), /api<ZoneScan>\("\/api\/scans\/zones"[\s\S]*location\.reload\(\)/);
-  assert.match(await readFile("src/frontend.tsx", "utf8"), /for \(const stock of stocks\.values\(\)\) await api\(`\/api\/stocks\/\$\{stock\.id\}\/sync`, "POST"\)/);
+  const [style, frontend, chart, apiClient] = await Promise.all([
+    readFile("src/style.css", "utf8"),
+    readFile("src/frontend.tsx", "utf8"),
+    readFile("src/ui/Chart.tsx", "utf8"),
+    readFile("src/ui/api.ts", "utf8"),
+  ]);
+  assert.match(style, /\.symbol-results\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?flex:\s*1;[\s\S]*?overflow:\s*auto;/);
+  assert.match(frontend, /displayedStocks\.map/);
+  assert.match(chart, /bars\.length - 300/);
+  assert.match(frontend, /sectorSort/);
+  assert.match(frontend, /All sectors/);
+  assert.match(chart, /api<ZoneScan>\("\/api\/scans\/zones"[\s\S]*location\.reload\(\)/);
+  assert.match(apiClient, /for \(const stock of stocks\.values\(\)\)\s+await api\(`\/api\/stocks\/\$\{stock\.id\}\/sync`, "POST"\)/);
   assert.match(await readFile("src/worker.ts", "utf8"), /index \+= 500/);
   assert.match(await readFile("src/worker.ts", "utf8"), /WHERE \$\{table\}\.open IS NOT excluded\.open/);
 });
