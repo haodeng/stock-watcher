@@ -68,9 +68,12 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.match(frontend, /All sectors/);
   assert.match(scanner, /api<ZoneScan>\("\/api\/scans\/zones"/);
   assert.doesNotMatch(chart, /document\.querySelector|createPortal|MutationObserver/);
-  assert.match(syncWorkflow, /for \(const stock of stocks\.values\(\)\)\s+await api\(`\/api\/stocks\/\$\{stock\.id\}\/sync`, "POST"\)/);
+  assert.match(syncWorkflow, /api\("\/api\/stocks\/sync", "POST"\)/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /api\.post\("\/api\/stocks\/sync"/);
   assert.match(await readFile("src/worker.ts", "utf8"), /index \+= 500/);
   assert.match(await readFile("src/worker.ts", "utf8"), /WHERE \$\{table\}\.open IS NOT excluded\.open/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /caches\.open\("bars"\)/);
+  assert.match(frontend, /chartCache/);
 });
 
 test("manual sync requests full history", () => {

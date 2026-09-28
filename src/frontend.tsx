@@ -16,7 +16,7 @@ import {
   IconSearch,
   IconTrash,
 } from "@tabler/icons-react";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { api } from "./ui/api";
 import { AlertsPanel } from "./ui/AlertsPanel";
@@ -134,11 +134,13 @@ function Login({ done }: { done: () => void }) {
 }
 
 function Dashboard() {
+  const chartCache = useRef(new Map<string, { bars: Bar[]; drawings: ChartDrawing[]; hasMore: boolean }>());
   const [watchlists, setWatchlists] = useState<Watchlist[]>([]),
     [watchlistId, setWatchlistId] = useState<number>(),
     [stocks, setStocks] = useState<Stock[]>([]),
     [stockId, setStockId] = useState<number>(),
     [bars, setBars] = useState<Bar[]>([]),
+    [hasOlderBars, setHasOlderBars] = useState(false),
     [drawings, setDrawings] = useState<ChartDrawing[]>([]),
     [timeframe, setTimeframe] = useState("1d"),
     [alerts, setAlerts] = useState<Alert[]>([]),
@@ -184,6 +186,10 @@ function Dashboard() {
     );
   };
   const loadAlerts = () => api<Alert[]>("/api/alerts").then(setAlerts);
+  const cacheChart = (key: string, value: { bars: Bar[]; drawings: ChartDrawing[]; hasMore: boolean }) => {
+    chartCache.current.set(key, value);
+    if (chartCache.current.size > 12) chartCache.current.delete(chartCache.current.keys().next().value!);
+  };
   const loadMarketStocks = () =>
     api<MarketStock[]>("/api/market/denmark")
       .then((data) => {
@@ -202,13 +208,22 @@ function Dashboard() {
   }, [watchlistId]);
   useEffect(() => {
     if (!stockId) return;
+    const key = `${stockId}:${timeframe}`, cached = chartCache.current.get(key);
+    if (cached) {
+      setBars(cached.bars);
+      setDrawings(cached.drawings);
+      setHasOlderBars(cached.hasMore);
+      return;
+    }
     setDrawings([]);
     void Promise.all([
-      api<{ bars: Bar[] }>(`/api/bars?stock=${stockId}&timeframe=${timeframe}`),
+      api<{ bars: Bar[]; hasMore: boolean }>(`/api/bars?stock=${stockId}&timeframe=${timeframe}`),
       api<{ drawings: ChartDrawing[] }>(`/api/stocks/${stockId}/drawings?timeframe=${timeframe}`),
     ]).then(([barData, drawingData]) => {
       setBars(barData.bars);
       setDrawings(drawingData.drawings);
+      setHasOlderBars(barData.hasMore);
+      cacheChart(key, { bars: barData.bars, drawings: drawingData.drawings, hasMore: barData.hasMore });
     }).catch((error) => setMessage(error.message));
   }, [stockId, timeframe]);
   const addStocks = async (codes: string[]) => {
@@ -234,11 +249,13 @@ function Dashboard() {
     setMessage("Syncing stock…");
     try {
       await api(`/api/stocks/${stockId}/sync`, "POST");
+      for (const key of chartCache.current.keys()) if (key.startsWith(`${stockId}:`)) chartCache.current.delete(key);
       if (watchlistId) await loadStocks(watchlistId);
-      const data = await api<{ bars: Bar[] }>(
-        `/api/bars?stock=${stockId}&timeframe=${timeframe}`,
+      const data = await api<{ bars: Bar[]; hasMore: boolean }>(
+        `/api/bars?stock=${stockId}&timeframe=${timeframe}&fresh=${Date.now()}`,
       );
       setBars(data.bars);
+      setHasOlderBars(data.hasMore);
       setMessage("Stock synced.");
     } catch (error) {
       setMessage((error as Error).message);
@@ -249,6 +266,15 @@ function Dashboard() {
   const openPicker = () => {
     setPickerOpen(true);
     if (!marketStocks.length) void loadMarketStocks();
+  };
+  const loadOlderBars = async () => {
+    if (!stockId || !bars.length || !hasOlderBars) return;
+    const data = await api<{ bars: Bar[]; hasMore: boolean }>(`/api/bars?stock=${stockId}&timeframe=${timeframe}&before=${encodeURIComponent(bars[0].time)}`);
+    const next = [...data.bars, ...bars], key = `${stockId}:${timeframe}`;
+    setBars(next);
+    setHasOlderBars(data.hasMore);
+    const cached = chartCache.current.get(key);
+    if (cached) cacheChart(key, { ...cached, bars: next, hasMore: data.hasMore });
   };
   const addFromPicker = (codes: string[]) => {
     void addStocks(codes);
@@ -354,11 +380,12 @@ function Dashboard() {
                 setMessage("Syncing data…");
                 void syncAllStocks()
                   .then(() => {
+                    chartCache.current.clear();
                     setMessage("Data synced.");
                     return stockId
-                      ? api<{ bars: Bar[] }>(
-                          `/api/bars?stock=${stockId}&timeframe=${timeframe}`,
-                        ).then((data) => setBars(data.bars))
+                      ? api<{ bars: Bar[]; hasMore: boolean }>(
+                          `/api/bars?stock=${stockId}&timeframe=${timeframe}&fresh=${Date.now()}`,
+                        ).then((data) => { setBars(data.bars); setHasOlderBars(data.hasMore); })
                       : undefined;
                   })
                   .catch((error) => setMessage(error.message))
@@ -685,6 +712,7 @@ function Dashboard() {
             >
               Fit {fit ? "on" : "off"}
             </button>
+            {hasOlderBars && <button className="fit-chart" onClick={() => void loadOlderBars()}>Load older</button>}
             <button
               className="alert-toggle"
               onClick={() => setAlertsOpen(true)}
@@ -701,6 +729,9 @@ function Dashboard() {
             drawings={drawings}
             onDrawingsChange={(next) => {
               setDrawings(next);
+              const key = stockId ? `${stockId}:${timeframe}` : "";
+              const cached = chartCache.current.get(key);
+              if (cached) cacheChart(key, { ...cached, drawings: next });
               if (stockId) void api(`/api/stocks/${stockId}/drawings`, "PUT", { timeframe, drawings: next }).catch((error) => setMessage(error.message));
             }}
           />

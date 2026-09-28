@@ -25,6 +25,14 @@ function number(value: unknown, message: string): number {
 
 function id(value: string): number { return number(value, "id must be numeric"); }
 
+async function cachedJson(context: any, body: unknown): Promise<Response> {
+  const cache = await caches.open("bars"), key = new Request(context.req.url), hit = await cache.match(key);
+  if (hit) return hit;
+  const response = context.json(body, 200, { "Cache-Control": "max-age=600" });
+  context.executionCtx.waitUntil(cache.put(key, response.clone()));
+  return response;
+}
+
 export function chartDrawings(value: unknown): ChartDrawing[] {
   if (!Array.isArray(value) || value.length > 100) throw new Error("drawings must contain at most 100 strokes");
   const drawings = value.map((drawing) => {
@@ -131,6 +139,8 @@ async function syncStock(env: Env, stockId: number, symbol: string): Promise<voi
   const ranges = syncRanges(Boolean(dailyExists), Boolean(hourlyExists));
   const daily = await yahooBars(symbol, "1d", ranges.daily);
   await saveBars(env.DB, stockId, "daily_bars", "trading_date", daily);
+  const [latest, previous] = daily.slice(-2).reverse();
+  await env.DB.prepare("UPDATE stocks SET last_daily_close = ?, previous_daily_close = ? WHERE id = ?").bind(latest?.close ?? null, previous?.close ?? null, stockId).run();
   const hourly = await yahooBars(symbol, "1h", ranges.hourly);
   await saveBars(env.DB, stockId, "hourly_bars", "trading_time", hourly);
 }
@@ -184,7 +194,7 @@ api.put("/api/watchlists/:watchlistId", async (context) => {
   return context.json({ ok: true });
 });
 api.get("/api/watchlists/:watchlistId/stocks", async (context) => {
-  const rows = await context.env.DB.prepare("SELECT s.id, s.code, s.provider_symbol AS providerSymbol, s.note, s.note_updated_at AS noteUpdatedAt, (SELECT close FROM daily_bars WHERE stock_id=s.id ORDER BY trading_date DESC LIMIT 1) AS last, (SELECT close FROM daily_bars WHERE stock_id=s.id ORDER BY trading_date DESC LIMIT 1 OFFSET 1) AS previous FROM stocks s JOIN watchlist_stocks ws ON ws.stock_id=s.id WHERE ws.watchlist_id=? ORDER BY s.code").bind(id(context.req.param("watchlistId"))).all<{ id: number; code: string; providerSymbol: string; note: string | null; noteUpdatedAt: string | null; last: number | null; previous: number | null }>();
+  const rows = await context.env.DB.prepare("SELECT s.id, s.code, s.provider_symbol AS providerSymbol, s.note, s.note_updated_at AS noteUpdatedAt, s.last_daily_close AS last, s.previous_daily_close AS previous FROM stocks s JOIN watchlist_stocks ws ON ws.stock_id=s.id WHERE ws.watchlist_id=? ORDER BY s.code").bind(id(context.req.param("watchlistId"))).all<{ id: number; code: string; providerSymbol: string; note: string | null; noteUpdatedAt: string | null; last: number | null; previous: number | null }>();
   return context.json(rows.results.map(({ previous, ...stock }) => ({ ...stock, change: stock.last != null && previous != null ? stock.last - previous : null, changePercent: stock.last != null && previous ? (stock.last - previous) / previous * 100 : null })));
 });
 api.post("/api/watchlists/:watchlistId/stocks", async (context) => {
@@ -231,14 +241,23 @@ api.post("/api/stocks/:stockId/sync", async (context) => {
   await checkAlerts(context.env);
   return context.json({ ok: true });
 });
+api.post("/api/stocks/sync", async (context) => {
+  const stocks = await context.env.DB.prepare("SELECT s.id, s.code FROM stocks s JOIN (SELECT DISTINCT stock_id FROM watchlist_stocks) ws ON ws.stock_id = s.id ORDER BY s.id").all<{ id: number; code: string }>();
+  for (const stock of stocks.results) await syncStock(context.env, stock.id, yahooSymbol(stock.code));
+  await checkAlerts(context.env);
+  return context.json({ synced: stocks.results.length });
+});
 api.get("/api/bars", async (context) => {
   const stockId = id(context.req.query("stock") ?? "");
   const timeframe = context.req.query("timeframe");
   if (timeframe !== "1d" && timeframe !== "1h" && timeframe !== "4h" && timeframe !== "1wk" && timeframe !== "1mo") throw new Error("timeframe must be 1d, 1wk, 1mo, 4h, or 1h");
   const table = timeframe === "1h" || timeframe === "4h" ? "hourly_bars" : "daily_bars";
   const column = timeframe === "1h" || timeframe === "4h" ? "trading_time" : "trading_date";
-  const bars = await context.env.DB.prepare(`SELECT ${column} AS time, open, high, low, close, volume FROM ${table} WHERE stock_id=? ORDER BY ${column}`).bind(stockId).all();
-  return context.json({ bars: timeframe === "1wk" || timeframe === "1mo" ? aggregateDailyBars(bars.results as Bar[], timeframe) : timeframe === "4h" ? aggregateHourlyBars(bars.results as Bar[]) : bars.results });
+  const before = context.req.query("before"), limit = Math.min(1_000, Math.max(1, Number(context.req.query("limit") ?? 500)));
+  if (!Number.isInteger(limit)) throw new Error("limit must be an integer");
+  const bars = await context.env.DB.prepare(`SELECT ${column} AS time, open, high, low, close, volume FROM ${table} WHERE stock_id = ?${before ? ` AND ${column} < ?` : ""} ORDER BY ${column} DESC LIMIT ?`).bind(stockId, ...(before ? [before] : []), limit).all<Bar>();
+  const source = bars.results.reverse();
+  return cachedJson(context, { bars: timeframe === "1wk" || timeframe === "1mo" ? aggregateDailyBars(source, timeframe) : timeframe === "4h" ? aggregateHourlyBars(source) : source, hasMore: bars.results.length === limit });
 });
 api.get("/api/stocks/:stockId/drawings", async (context) => {
   const timeframe = context.req.query("timeframe");
