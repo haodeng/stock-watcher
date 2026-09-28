@@ -153,6 +153,7 @@ function Dashboard() {
     [symbolSort, setSymbolSort] = useState<"asc" | "desc">(),
     [sectorSort, setSectorSort] = useState<"asc" | "desc">(),
     [sectorFilter, setSectorFilter] = useState(""),
+    [notesOnly, setNotesOnly] = useState(false),
     [stockSearch, setStockSearch] = useState(""),
     [alertsOpen, setAlertsOpen] = useState(false),
     [fit, setFit] = useState(false),
@@ -301,6 +302,7 @@ function Dashboard() {
   const filteredStocks = stocks.filter(
     (stock) =>
       (!sectorFilter || stockSector(stock.code) === sectorFilter) &&
+      (!notesOnly || Boolean(stock.note)) &&
       stock.code.toLowerCase().includes(stockSearch.trim().toLowerCase()),
   );
   const displayedStocks = sectorSort
@@ -490,6 +492,14 @@ function Dashboard() {
                   </option>
                 ))}
               </select>
+            </label>
+            <label className="notes-filter">
+              <input
+                type="checkbox"
+                checked={notesOnly}
+                onChange={(event) => setNotesOnly(event.target.checked)}
+              />
+              Notes only
             </label>
             <label className="watchlist-search">
               <IconSearch size={16} />

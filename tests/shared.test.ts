@@ -62,6 +62,7 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.doesNotMatch(chart, /Undo drawing/);
   assert.match(frontend, /displayedStocks\.map/);
   assert.match(frontend, /key=\{`\$\{stockId\}:\$\{timeframe\}`\}/);
+  assert.match(frontend, /notesOnly/);
   assert.match(chart, /bars\.length - 300/);
   assert.match(frontend, /sectorSort/);
   assert.match(frontend, /All sectors/);

@@ -740,6 +740,14 @@ button:focus-visible {
   color: #a4abb4;
   font-size: 12px;
 }
+.notes-filter {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: #a4abb4;
+  font-size: 12px;
+}
 .sector-filter select {
   min-width: 0;
   max-width: 130px;
