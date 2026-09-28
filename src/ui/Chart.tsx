@@ -7,7 +7,7 @@ import {
   type SeriesAttachedParameter,
   type Time,
 } from "lightweight-charts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import {
   chartTime,
   fairValueGaps,
@@ -15,7 +15,7 @@ import {
   swings,
   type FairValueGap,
 } from "../shared";
-import type { Bar, ZoneSettings } from "./types";
+import type { Bar, ChartDrawing, ChartPoint, ZoneSettings } from "./types";
 
 class PriceZones {
   private chart?: SeriesAttachedParameter["chart"];
@@ -86,16 +86,27 @@ export function Chart({
   fit,
   settings,
   onSettingsChange,
+  drawings,
+  onDrawingsChange,
 }: {
   bars: Bar[];
   fit: boolean;
   settings: ZoneSettings;
   onSettingsChange: (settings: ZoneSettings) => void;
+  drawings: ChartDrawing[];
+  onDrawingsChange: (drawings: ChartDrawing[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<any>(undefined);
+  const seriesRef = useRef<any>(undefined);
   const [showZigZag, setShowZigZag] = useState(true),
     [showFvg, setShowFvg] = useState(true),
-    [showOb, setShowOb] = useState(true);
+    [showOb, setShowOb] = useState(true),
+    [drawing, setDrawing] = useState(false),
+    [draft, setDraft] = useState<ChartPoint[]>([]),
+    [selected, setSelected] = useState<number>(),
+    [drag, setDrag] = useState<{ index: number; startX: number; startY: number; x: number; y: number }>(),
+    [, redraw] = useState(0);
   useEffect(() => {
     if (!ref.current || !bars.length) return;
     const chart = createChart(ref.current, {
@@ -117,6 +128,10 @@ export function Chart({
       wickUpColor: "#21b89a",
       wickDownColor: "#f04d61",
     });
+    chartRef.current = chart;
+    seriesRef.current = series;
+    const refresh = () => redraw((value) => value + 1);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(refresh);
     series.setData(
       bars.map((bar) => ({ ...bar, time: chartTime(bar.time) as Time })),
     );
@@ -214,6 +229,9 @@ export function Chart({
     observer.observe(ref.current);
     return () => {
       observer.disconnect();
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(refresh);
+      chartRef.current = undefined;
+      seriesRef.current = undefined;
       chart.remove();
     };
   }, [
@@ -224,6 +242,37 @@ export function Chart({
     showOb,
     showZigZag,
   ]);
+  const storedTime = (time: any): string | number => typeof time === "object" ? `${time.year}-${String(time.month).padStart(2, "0")}-${String(time.day).padStart(2, "0")}` : time;
+  const point = (event: PointerEvent<SVGSVGElement>) => {
+    const box = event.currentTarget.getBoundingClientRect(), chart = chartRef.current, series = seriesRef.current;
+    if (!chart || !series) return;
+    const time = chart.timeScale().coordinateToTime(event.clientX - box.left), price = series.coordinateToPrice(event.clientY - box.top);
+    return time != null && price != null ? { time: storedTime(time), price } : undefined;
+  };
+  const path = (points: ChartPoint[]) => points.map((point, index) => {
+    const time = typeof point.time === "number" ? point.time as Time : chartTime(point.time) as Time;
+    const x = chartRef.current?.timeScale().timeToCoordinate(time), y = seriesRef.current?.priceToCoordinate(point.price);
+    return x == null || y == null ? "" : `${index ? "L" : "M"}${x},${y}`;
+  }).join(" ");
+  const move = (stroke: ChartDrawing, xOffset: number, yOffset: number): ChartDrawing => ({
+    points: stroke.points.map((point) => {
+      const time = typeof point.time === "number" ? point.time as Time : chartTime(point.time) as Time;
+      const x = chartRef.current?.timeScale().timeToCoordinate(time), y = seriesRef.current?.priceToCoordinate(point.price);
+      const nextTime = x == null ? null : chartRef.current?.timeScale().coordinateToTime(x + xOffset);
+      const nextPrice = y == null ? null : seriesRef.current?.coordinateToPrice(y + yOffset);
+      return nextTime == null || nextPrice == null ? point : { time: storedTime(nextTime), price: nextPrice };
+    }),
+  });
+  useEffect(() => {
+    const removeSelected = (event: KeyboardEvent) => {
+      if ((event.key !== "Delete" && event.key !== "Backspace") || selected == null || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
+      event.preventDefault();
+      onDrawingsChange(drawings.filter((_, index) => index !== selected));
+      setSelected(undefined);
+    };
+    window.addEventListener("keydown", removeSelected);
+    return () => window.removeEventListener("keydown", removeSelected);
+  }, [drawings, onDrawingsChange, selected]);
   return (
     <div className="chart">
       {bars.length ? (
@@ -248,6 +297,9 @@ export function Chart({
             onClick={() => setShowOb((value) => !value)}
           >
             OB {showOb ? "on" : "off"}
+          </button>
+          <button className={`fit-chart zigzag-toggle ${drawing ? "selected" : ""}`} aria-pressed={drawing} onClick={() => setDrawing((value) => !value)}>
+            Draw {drawing ? "on" : "off"}
           </button>
           <details className="zone-settings">
             <summary>Zone settings</summary>
@@ -345,7 +397,20 @@ export function Chart({
               </section>
             </div>
           </details>
-          <div ref={ref} />
+          <div className="chart-surface" ref={ref}>
+            <svg className={`drawing-layer ${drawing ? "active" : ""}`}
+              onPointerDown={(event) => { if (!drawing) return; const first = point(event); if (first) { event.currentTarget.setPointerCapture(event.pointerId); setSelected(undefined); setDraft([first]); } }}
+              onPointerMove={(event) => { if (!draft.length) return; const next = point(event); if (next) setDraft((current) => current.length < 1_000 ? [...current, next] : current); }}
+              onPointerUp={() => { if (draft.length > 1) onDrawingsChange([...drawings, { points: draft }]); setDraft([]); }}
+            >
+              {drawings.map((stroke, index) => <path key={index} className={selected === index ? "selected" : ""} d={path(stroke.points)} transform={drag?.index === index ? `translate(${drag.x - drag.startX} ${drag.y - drag.startY})` : undefined}
+                onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setSelected(index); setDrag({ index, startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY }); }}
+                onPointerMove={(event) => { if (drag?.index === index) { event.stopPropagation(); setDrag({ ...drag, x: event.clientX, y: event.clientY }); } }}
+                onPointerUp={(event) => { if (drag?.index !== index) return; event.stopPropagation(); const xOffset = event.clientX - drag.startX, yOffset = event.clientY - drag.startY; if (xOffset || yOffset) onDrawingsChange(drawings.map((drawing, current) => current === index ? move(drawing, xOffset, yOffset) : drawing)); setDrag(undefined); }}
+              />)}
+              {draft.length > 1 && <path d={path(draft)} />}
+            </svg>
+          </div>
         </>
       ) : (
         <p>No price history for this timeframe.</p>

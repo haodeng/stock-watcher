@@ -10,6 +10,7 @@ type Env = {
   TELEGRAM_CHAT_ID?: string;
 };
 export type Bar = { time: string; open: number; high: number; low: number; close: number; volume: number };
+type ChartDrawing = { points: Array<{ time: string | number; price: number }> };
 const api = new Hono<{ Bindings: Env }>();
 const copenhagenClock = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Copenhagen", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" });
 type MarketStock = { code: string; name: string; sector: string };
@@ -23,6 +24,24 @@ function number(value: unknown, message: string): number {
 }
 
 function id(value: string): number { return number(value, "id must be numeric"); }
+
+export function chartDrawings(value: unknown): ChartDrawing[] {
+  if (!Array.isArray(value) || value.length > 100) throw new Error("drawings must contain at most 100 strokes");
+  const drawings = value.map((drawing) => {
+    if (!drawing || typeof drawing !== "object" || !Array.isArray((drawing as ChartDrawing).points) || (drawing as ChartDrawing).points.length < 2 || (drawing as ChartDrawing).points.length > 1_000) throw new Error("each drawing must contain 2 to 1,000 points");
+    return { points: (drawing as ChartDrawing).points.map(({ time, price }) => {
+      if ((typeof time !== "string" && typeof time !== "number") || (typeof time === "number" && !Number.isFinite(time)) || !Number.isFinite(price)) throw new Error("drawing points must have a time and price");
+      return { time, price };
+    }) };
+  });
+  if (JSON.stringify(drawings).length > 200_000) throw new Error("drawings are too large");
+  return drawings;
+}
+
+export function copenhagenDate(value: Date): string {
+  const parts = copenhagenClock.formatToParts(value);
+  return ["year", "month", "day"].map((type) => parts.find((part) => part.type === type)?.value).join("-");
+}
 
 async function signature(value: string, secret: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -52,7 +71,7 @@ async function yahooBars(symbol: string, interval: "1d" | "1h", range: string): 
     const [open, high, low, close, volume] = [quote.open?.[index], quote.high?.[index], quote.low?.[index], quote.close?.[index], quote.volume?.[index]];
     if ([open, high, low, close, volume].some((value) => value == null)) return [];
     const date = new Date(timestamp * 1000);
-    return [{ time: interval === "1d" ? date.toISOString().slice(0, 10) : date.toISOString(), open: open!, high: high!, low: low!, close: close!, volume: volume! }];
+    return [{ time: interval === "1d" ? copenhagenDate(date) : date.toISOString(), open: open!, high: high!, low: low!, close: close!, volume: volume! }];
   });
 }
 
@@ -219,6 +238,19 @@ api.get("/api/bars", async (context) => {
   const column = timeframe === "1h" || timeframe === "4h" ? "trading_time" : "trading_date";
   const bars = await context.env.DB.prepare(`SELECT ${column} AS time, open, high, low, close, volume FROM ${table} WHERE stock_id=? ORDER BY ${column}`).bind(stockId).all();
   return context.json({ bars: timeframe === "1wk" || timeframe === "1mo" ? aggregateDailyBars(bars.results as Bar[], timeframe) : timeframe === "4h" ? aggregateHourlyBars(bars.results as Bar[]) : bars.results });
+});
+api.get("/api/stocks/:stockId/drawings", async (context) => {
+  const timeframe = context.req.query("timeframe");
+  if (timeframe !== "1d" && timeframe !== "1h" && timeframe !== "4h" && timeframe !== "1wk" && timeframe !== "1mo") throw new Error("invalid timeframe");
+  const row = await context.env.DB.prepare("SELECT drawing FROM chart_drawings WHERE stock_id = ? AND timeframe = ?").bind(id(context.req.param("stockId")), timeframe).first<{ drawing: string }>();
+  return context.json({ drawings: row ? chartDrawings(JSON.parse(row.drawing)) : [] });
+});
+api.put("/api/stocks/:stockId/drawings", async (context) => {
+  const body = await context.req.json<{ timeframe?: string; drawings?: unknown }>();
+  if (body.timeframe !== "1d" && body.timeframe !== "1h" && body.timeframe !== "4h" && body.timeframe !== "1wk" && body.timeframe !== "1mo") throw new Error("invalid timeframe");
+  const drawings = chartDrawings(body.drawings);
+  await context.env.DB.prepare("INSERT INTO chart_drawings (stock_id, timeframe, drawing) VALUES (?, ?, ?) ON CONFLICT(stock_id, timeframe) DO UPDATE SET drawing = excluded.drawing, updated_at = CURRENT_TIMESTAMP").bind(id(context.req.param("stockId")), body.timeframe, JSON.stringify(drawings)).run();
+  return context.json({ ok: true });
 });
 api.post("/api/scans/zones", async (context) => {
   const body = await context.req.json<{ watchlistId?: number; zone?: string; timeframe?: string; swingMultiplier?: number; fvgMinAtr?: number; obDisplacementAtr?: number; proximityAtr?: number; freshOnly?: boolean }>();

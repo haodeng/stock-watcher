@@ -28,6 +28,7 @@ import { ZoneScanner } from "./ui/ZoneScanner";
 import type {
   Alert,
   Bar,
+  ChartDrawing,
   MarketStock,
   Stock,
   Watchlist,
@@ -138,6 +139,7 @@ function Dashboard() {
     [stocks, setStocks] = useState<Stock[]>([]),
     [stockId, setStockId] = useState<number>(),
     [bars, setBars] = useState<Bar[]>([]),
+    [drawings, setDrawings] = useState<ChartDrawing[]>([]),
     [timeframe, setTimeframe] = useState("1d"),
     [alerts, setAlerts] = useState<Alert[]>([]),
     [message, setMessage] = useState(""),
@@ -198,12 +200,15 @@ function Dashboard() {
       void loadStocks(watchlistId).catch((error) => setMessage(error.message));
   }, [watchlistId]);
   useEffect(() => {
-    if (stockId)
-      void api<{ bars: Bar[] }>(
-        `/api/bars?stock=${stockId}&timeframe=${timeframe}`,
-      )
-        .then((data) => setBars(data.bars))
-        .catch((error) => setMessage(error.message));
+    if (!stockId) return;
+    setDrawings([]);
+    void Promise.all([
+      api<{ bars: Bar[] }>(`/api/bars?stock=${stockId}&timeframe=${timeframe}`),
+      api<{ drawings: ChartDrawing[] }>(`/api/stocks/${stockId}/drawings?timeframe=${timeframe}`),
+    ]).then(([barData, drawingData]) => {
+      setBars(barData.bars);
+      setDrawings(drawingData.drawings);
+    }).catch((error) => setMessage(error.message));
   }, [stockId, timeframe]);
   const addStocks = async (codes: string[]) => {
     setAdding(true);
@@ -682,6 +687,11 @@ function Dashboard() {
             fit={fit}
             settings={zoneSettings}
             onSettingsChange={setZoneSettings}
+            drawings={drawings}
+            onDrawingsChange={(next) => {
+              setDrawings(next);
+              if (stockId) void api(`/api/stocks/${stockId}/drawings`, "PUT", { timeframe, drawings: next }).catch((error) => setMessage(error.message));
+            }}
           />
           <StockNote
             stock={selected}

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { chartTime, crossed, fairValueGaps, freshBullishZoneNearby, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol, zoneNearby } from "../src/shared";
-import { aggregateDailyBars, aggregateHourlyBars, syncRanges } from "../src/worker";
+import { aggregateDailyBars, aggregateHourlyBars, chartDrawings, copenhagenDate, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
   assert.equal(parseCode("nda_dk"), "NDA_DK");
@@ -28,6 +28,13 @@ test("access key comparison rejects differences", () => {
   assert.equal(sameSecret("wrong", "correct"), false);
 });
 
+test("chart drawings accept bounded time-price strokes", () => {
+  assert.deepEqual(chartDrawings([{ points: [{ time: "2026-09-24", price: 100 }, { time: "2026-09-25", price: 101 }] }]), [{ points: [{ time: "2026-09-24", price: 100 }, { time: "2026-09-25", price: 101 }] }]);
+  assert.throws(() => chartDrawings([{ points: [{ time: "2026-09-24", price: 100 }] }]));
+  assert.throws(() => chartDrawings([{ points: [{ time: "2026-09-24", price: Infinity }, { time: "2026-09-25", price: 101 }] }]));
+  assert.throws(() => chartDrawings([{ points: [{ time: NaN, price: 100 }, { time: "2026-09-25", price: 101 }] }]));
+});
+
 test("Worker binds static assets and has no scheduled trigger", async () => {
   const config = JSON.parse(await readFile("wrangler.jsonc", "utf8"));
   assert.equal(config.assets.binding, "ASSETS");
@@ -47,6 +54,9 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
     readFile("src/ui/sync.ts", "utf8"),
   ]);
   assert.match(style, /\.symbol-results\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?flex:\s*1;[\s\S]*?overflow:\s*auto;/);
+  assert.match(style, /\.drawing-layer\s*\{[\s\S]*?z-index:\s*3;/);
+  assert.match(chart, /event\.key !== "Delete" && event\.key !== "Backspace"/);
+  assert.doesNotMatch(chart, /Undo drawing/);
   assert.match(frontend, /displayedStocks\.map/);
   assert.match(chart, /bars\.length - 300/);
   assert.match(frontend, /sectorSort/);
@@ -69,6 +79,10 @@ test("an existing stock syncs only recent bars", () => {
 test("hourly timestamps become chart timestamps", () => {
   assert.equal(chartTime("2026-09-22T14:00:00.000Z"), 1_790_085_600);
   assert.equal(chartTime("2026-09-22"), "2026-09-22");
+});
+
+test("daily Yahoo timestamps use Copenhagen's trading date", () => {
+  assert.equal(copenhagenDate(new Date("2026-09-24T22:00:00.000Z")), "2026-09-25");
 });
 
 test("ATR-filtered swings ignore minor reversals", () => {

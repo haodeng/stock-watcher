@@ -36,3 +36,5 @@ export type ZoneSettings = {
   obDisplacementAtr: number;
   obLimit: number;
 };
+export type ChartPoint = { time: string | number; price: number };
+export type ChartDrawing = { points: ChartPoint[] };
