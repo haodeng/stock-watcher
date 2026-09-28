@@ -99,6 +99,7 @@ export function Chart({
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(undefined);
   const seriesRef = useRef<any>(undefined);
+  const drawingHistory = useRef<ChartDrawing[][]>([]);
   const [showZigZag, setShowZigZag] = useState(true),
     [showFvg, setShowFvg] = useState(true),
     [showOb, setShowOb] = useState(true),
@@ -107,6 +108,8 @@ export function Chart({
     [selected, setSelected] = useState<number>(),
     [drag, setDrag] = useState<{ index: number; startX: number; startY: number; x: number; y: number }>(),
     [, redraw] = useState(0);
+  const drawingState = useRef({ drawings, onDrawingsChange, selected });
+  drawingState.current = { drawings, onDrawingsChange, selected };
   useEffect(() => {
     if (!ref.current || !bars.length) return;
     const chart = createChart(ref.current, {
@@ -119,7 +122,7 @@ export function Chart({
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: "#343a42" },
-      timeScale: { borderColor: "#343a42" },
+      timeScale: { borderColor: "#343a42", rightOffset: 40 },
     });
     const series = chart.addSeries(CandlestickSeries, {
       upColor: "#21b89a",
@@ -220,9 +223,9 @@ export function Chart({
         .timeScale()
         .setVisibleLogicalRange({
           from: Math.max(0, bars.length - 300),
-          to: bars.length - 1,
+          to: bars.length + 39,
         });
-    else chart.timeScale().fitContent();
+    else chart.timeScale().setVisibleLogicalRange({ from: 0, to: bars.length + 39 });
     const observer = new ResizeObserver(() =>
       chart.applyOptions({ width: ref.current?.clientWidth ?? 0 }),
     );
@@ -246,33 +249,54 @@ export function Chart({
   const point = (event: PointerEvent<SVGSVGElement>) => {
     const box = event.currentTarget.getBoundingClientRect(), chart = chartRef.current, series = seriesRef.current;
     if (!chart || !series) return;
-    const time = chart.timeScale().coordinateToTime(event.clientX - box.left), price = series.coordinateToPrice(event.clientY - box.top);
+    const x = event.clientX - box.left, time = chart.timeScale().coordinateToTime(x), price = series.coordinateToPrice(event.clientY - box.top), last = chart.timeScale().timeToCoordinate(chartTime(bars.at(-1)!.time) as Time), logical = chart.timeScale().coordinateToLogical(x);
+    if (last != null && x > last && logical != null && price != null) return { time: "", future: logical - (bars.length - 1), price };
     return time != null && price != null ? { time: storedTime(time), price } : undefined;
   };
   const path = (points: ChartPoint[]) => points.map((point, index) => {
     const time = typeof point.time === "number" ? point.time as Time : chartTime(point.time) as Time;
-    const x = chartRef.current?.timeScale().timeToCoordinate(time), y = seriesRef.current?.priceToCoordinate(point.price);
+    const x = point.future == null ? chartRef.current?.timeScale().timeToCoordinate(time) : chartRef.current?.timeScale().logicalToCoordinate(bars.length - 1 + point.future), y = seriesRef.current?.priceToCoordinate(point.price);
     return x == null || y == null ? "" : `${index ? "L" : "M"}${x},${y}`;
   }).join(" ");
   const move = (stroke: ChartDrawing, xOffset: number, yOffset: number): ChartDrawing => ({
     points: stroke.points.map((point) => {
       const time = typeof point.time === "number" ? point.time as Time : chartTime(point.time) as Time;
-      const x = chartRef.current?.timeScale().timeToCoordinate(time), y = seriesRef.current?.priceToCoordinate(point.price);
+      const x = point.future == null ? chartRef.current?.timeScale().timeToCoordinate(time) : chartRef.current?.timeScale().logicalToCoordinate(bars.length - 1 + point.future), y = seriesRef.current?.priceToCoordinate(point.price);
       const nextTime = x == null ? null : chartRef.current?.timeScale().coordinateToTime(x + xOffset);
+      const future = x == null ? null : chartRef.current?.timeScale().coordinateToLogical(x + xOffset);
       const nextPrice = y == null ? null : seriesRef.current?.coordinateToPrice(y + yOffset);
-      return nextTime == null || nextPrice == null ? point : { time: storedTime(nextTime), price: nextPrice };
+      const last = chartRef.current?.timeScale().timeToCoordinate(chartTime(bars.at(-1)!.time) as Time);
+      if (x == null || nextPrice == null) return point;
+      return last != null && x + xOffset > last && future != null ? { time: "", future: future - (bars.length - 1), price: nextPrice } : nextTime == null ? point : { time: storedTime(nextTime), price: nextPrice };
     }),
   });
+  const saveDrawings = (next: ChartDrawing[], undoable = false) => {
+    if (undoable) {
+      drawingHistory.current.push(drawings);
+      if (drawingHistory.current.length > 50) drawingHistory.current.shift();
+    }
+    onDrawingsChange(next);
+  };
   useEffect(() => {
     const removeSelected = (event: KeyboardEvent) => {
-      if ((event.key !== "Delete" && event.key !== "Backspace") || selected == null || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
+      const current = drawingState.current;
+      if ((event.key !== "Delete" && event.key !== "Backspace") || current.selected == null || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
       event.preventDefault();
-      onDrawingsChange(drawings.filter((_, index) => index !== selected));
+      current.onDrawingsChange(current.drawings.filter((_, index) => index !== current.selected));
+      setSelected(undefined);
+    };
+    const undo = (event: KeyboardEvent) => {
+      if (event.repeat || (!event.metaKey && !event.ctrlKey) || event.key.toLowerCase() !== "z" || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
+      const previous = drawingHistory.current.pop();
+      if (!previous) return;
+      event.preventDefault();
+      drawingState.current.onDrawingsChange(previous);
       setSelected(undefined);
     };
     window.addEventListener("keydown", removeSelected);
+    window.addEventListener("keydown", undo);
     return () => window.removeEventListener("keydown", removeSelected);
-  }, [drawings, onDrawingsChange, selected]);
+  }, []);
   return (
     <div className="chart">
       {bars.length ? (
@@ -401,7 +425,7 @@ export function Chart({
             <svg className={`drawing-layer ${drawing ? "active" : ""}`}
               onPointerDown={(event) => { if (!drawing) return; const first = point(event); if (first) { event.currentTarget.setPointerCapture(event.pointerId); setSelected(undefined); setDraft([first]); } }}
               onPointerMove={(event) => { if (!draft.length) return; const next = point(event); if (next) setDraft((current) => current.length < 1_000 ? [...current, next] : current); }}
-              onPointerUp={() => { if (draft.length > 1) onDrawingsChange([...drawings, { points: draft }]); setDraft([]); }}
+              onPointerUp={() => { if (draft.length > 1) saveDrawings([...drawings, { points: draft }], true); setDraft([]); }}
             >
               {drawings.map((stroke, index) => <path key={index} className={selected === index ? "selected" : ""} d={path(stroke.points)} transform={drag?.index === index ? `translate(${drag.x - drag.startX} ${drag.y - drag.startY})` : undefined}
                 onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); setSelected(index); setDrag({ index, startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY }); }}

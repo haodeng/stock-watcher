@@ -683,6 +683,7 @@ function Dashboard() {
             </button>
           </div>
           <Chart
+            key={`${stockId}:${timeframe}`}
             bars={bars}
             fit={fit}
             settings={zoneSettings}

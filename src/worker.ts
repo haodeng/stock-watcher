@@ -10,7 +10,7 @@ type Env = {
   TELEGRAM_CHAT_ID?: string;
 };
 export type Bar = { time: string; open: number; high: number; low: number; close: number; volume: number };
-type ChartDrawing = { points: Array<{ time: string | number; price: number }> };
+type ChartDrawing = { points: Array<{ time: string | number; price: number; future?: number }> };
 const api = new Hono<{ Bindings: Env }>();
 const copenhagenClock = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Copenhagen", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" });
 type MarketStock = { code: string; name: string; sector: string };
@@ -29,9 +29,10 @@ export function chartDrawings(value: unknown): ChartDrawing[] {
   if (!Array.isArray(value) || value.length > 100) throw new Error("drawings must contain at most 100 strokes");
   const drawings = value.map((drawing) => {
     if (!drawing || typeof drawing !== "object" || !Array.isArray((drawing as ChartDrawing).points) || (drawing as ChartDrawing).points.length < 2 || (drawing as ChartDrawing).points.length > 1_000) throw new Error("each drawing must contain 2 to 1,000 points");
-    return { points: (drawing as ChartDrawing).points.map(({ time, price }) => {
-      if ((typeof time !== "string" && typeof time !== "number") || (typeof time === "number" && !Number.isFinite(time)) || !Number.isFinite(price)) throw new Error("drawing points must have a time and price");
-      return { time, price };
+    return { points: (drawing as ChartDrawing).points.map(({ time, price, future }) => {
+      const validTime = (typeof time === "string" && time) || (typeof time === "number" && Number.isFinite(time));
+      if ((!validTime && future == null) || (future != null && !Number.isFinite(future)) || !Number.isFinite(price)) throw new Error("drawing points must have a time and price");
+      return future == null ? { time, price } : { time, price, future };
     }) };
   });
   if (JSON.stringify(drawings).length > 200_000) throw new Error("drawings are too large");

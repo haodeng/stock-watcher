@@ -30,6 +30,7 @@ test("access key comparison rejects differences", () => {
 
 test("chart drawings accept bounded time-price strokes", () => {
   assert.deepEqual(chartDrawings([{ points: [{ time: "2026-09-24", price: 100 }, { time: "2026-09-25", price: 101 }] }]), [{ points: [{ time: "2026-09-24", price: 100 }, { time: "2026-09-25", price: 101 }] }]);
+  assert.deepEqual(chartDrawings([{ points: [{ time: "", future: 2, price: 100 }, { time: "", future: 3, price: 101 }] }]), [{ points: [{ time: "", future: 2, price: 100 }, { time: "", future: 3, price: 101 }] }]);
   assert.throws(() => chartDrawings([{ points: [{ time: "2026-09-24", price: 100 }] }]));
   assert.throws(() => chartDrawings([{ points: [{ time: "2026-09-24", price: Infinity }, { time: "2026-09-25", price: 101 }] }]));
   assert.throws(() => chartDrawings([{ points: [{ time: NaN, price: 100 }, { time: "2026-09-25", price: 101 }] }]));
@@ -56,8 +57,11 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.match(style, /\.symbol-results\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?flex:\s*1;[\s\S]*?overflow:\s*auto;/);
   assert.match(style, /\.drawing-layer\s*\{[\s\S]*?z-index:\s*3;/);
   assert.match(chart, /event\.key !== "Delete" && event\.key !== "Backspace"/);
+  assert.match(chart, /event\.metaKey && !event\.ctrlKey/);
+  assert.match(chart, /event\.repeat \|\| \(!event\.metaKey/);
   assert.doesNotMatch(chart, /Undo drawing/);
   assert.match(frontend, /displayedStocks\.map/);
+  assert.match(frontend, /key=\{`\$\{stockId\}:\$\{timeframe\}`\}/);
   assert.match(chart, /bars\.length - 300/);
   assert.match(frontend, /sectorSort/);
   assert.match(frontend, /All sectors/);
