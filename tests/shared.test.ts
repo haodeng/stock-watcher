@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { chartTime, crossed, fairValueGaps, freshBullishZoneNearby, nasdaqCode, orderBlocks, parseCode, sameSecret, stockNote, swings, watchlistName, yahooSymbol, zoneNearby } from "../src/shared";
-import { aggregateDailyBars, aggregateHourlyBars, chartDrawings, copenhagenDate, syncRanges } from "../src/worker";
+import { aggregateDailyBars, aggregateHourlyBars, chartDrawings, copenhagenDate, dailyFromHourlyBars, syncRanges } from "../src/worker";
 
 test("Danish codes map to Yahoo symbols", () => {
   assert.equal(parseCode("nda_dk"), "NDA_DK");
@@ -68,8 +68,8 @@ test("Worker binds static assets and has no scheduled trigger", async () => {
   assert.match(frontend, /All sectors/);
   assert.match(scanner, /api<ZoneScan>\("\/api\/scans\/zones"/);
   assert.doesNotMatch(chart, /document\.querySelector|createPortal|MutationObserver/);
-  assert.match(syncWorkflow, /api\("\/api\/stocks\/sync", "POST"\)/);
-  assert.match(await readFile("src/worker.ts", "utf8"), /api\.post\("\/api\/stocks\/sync"/);
+  assert.match(syncWorkflow, /api<Array<\{ id: number \}>>\("\/api\/stocks\/sync"\)/);
+  assert.match(await readFile("src/worker.ts", "utf8"), /api\.get\("\/api\/stocks\/sync"/);
   assert.match(await readFile("src/worker.ts", "utf8"), /index \+= 500/);
   assert.match(await readFile("src/worker.ts", "utf8"), /WHERE \$\{table\}\.open IS NOT excluded\.open/);
   assert.match(await readFile("src/worker.ts", "utf8"), /caches\.open\("bars"\)/);
@@ -140,6 +140,15 @@ test("four-hour candles follow Copenhagen trading sessions", () => {
     { time: "2024-09-18T07:00:00.000Z", open: 100, high: 105, low: 99, close: 104, volume: 40 },
     { time: "2024-09-18T11:00:00.000Z", open: 104, high: 109, low: 103, close: 108, volume: 40 },
   ]);
+});
+
+test("hourly candles fill a missing Copenhagen daily candle", () => {
+  const bars = [
+    { time: "2026-09-29T07:00:00.000Z", open: 134, high: 135.3, low: 134, close: 134.1, volume: 10 },
+    { time: "2026-09-29T08:00:00.000Z", open: 134.1, high: 134.5, low: 133, close: 133.2, volume: 20 },
+    { time: "2026-09-29T14:00:00.000Z", open: 131.8, high: 132.05, low: 131.5, close: 131.95, volume: 30 },
+  ];
+  assert.deepEqual(dailyFromHourlyBars(bars), [{ time: "2026-09-29", open: 134, high: 135.3, low: 131.5, close: 131.95, volume: 60 }]);
 });
 
 test("weekly and monthly candles are derived from daily bars", () => {
